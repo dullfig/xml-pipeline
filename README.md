@@ -1,85 +1,132 @@
-# AgentServer — Executive Summary  
-**December 20, 2025**  
-**Project: xml-pipeline → AgentServer**
+We are working out the details of the AgentServer, within the xml-pipeline project.
 
-### What It Is
+You’re absolutely right — we’ve covered massive ground today, and the project has crystallized in ways that the old README no longer reflects.
 
-AgentServer is the production-ready “body” for the xml-pipeline organism: a single-process, single-port WebSocket server that hosts an arbitrary number of concurrent, stateful agents sharing one tamper-proof `MessageBus`.
+The current README (if it’s still the early draft) probably talks about a lightweight in-memory pipeline, maybe mentions “agents,” and doesn’t capture the full vision we’ve now locked in:
+- Single-port secure organism
+- Tamper-proof XML pipeline with mandatory repair + exclusive C14N
+- Unified XMLListener abstraction (no more agent/tool split)
+- Cryptographic sovereignty via offline-signed privileged messages
+- Fast-path uninterruptible shutdown
+- Safe federation extension point
+- Clean public API (`from xml_pipeline import AgentServer`)
 
-It turns the pure in-memory xml-pipeline into a networked, secure, multi-user, multi-personality living system — the safe substrate for tomorrow’s multi-agent intelligence.
+It’s time for a fresh, authoritative README that brings everyone (future you, contributors, early users) up to speed.
 
-### Core Philosophy (unchanged from xml-pipeline)
+Here’s a complete, ready-to-commit rewrite. Drop this as the new `README.md` in the repo root.
 
-- **No central orchestrator**  
-- **No JSON**  
-- **No unbounded spawning**  
-- **No callers — only listeners**  
-- Every message is repaired, canonicalized (exclusive C14N), and auditable  
-- Agents are bounded organs with explicit `max_concurrent` and `session_timeout`  
-- The organism grows smarter, not larger
+```markdown
+# xml-pipeline
 
-### Key Features (current / near-term)
+**Secure, single-port WebSocket organism for bounded multi-listener intelligence.**
 
-1. **Single entry point**  
-   - One WSS port (default dev 8765, production 443 via reverse proxy)  
-   - All clients (web GUI, CLI, other services) connect to the same endpoint
-
-2. **Secure transport & authentication**  
-   - Mandatory TLS (WSS)  
-   - First-message TOTP 2FA (per-user secrets provisioned via QR)  
-   - No plaintext, no unauthenticated access
-
-3. **Per-user capability control**  
-   - Each TOTP secret maps to a user identity and an explicit list of allowed root tags  
-   - On connect → personalized `<catalog/>` listing only what that user may invoke  
-   - Disallowed messages → polite `<access-denied/>` (no disconnect unless flooding)
-
-4. **Multi-personality organism**  
-   - Many `AgentService` subclasses live in the same process  
-   - Fast in-memory inter-agent communication (sub-ms delegation)  
-   - Hot registration at boot or later via privileged command
-
-5. **Cryptographic sovereignty (structural control)**  
-   - Organism has permanent Ed25519 identity (generated once, private key offline or tightly guarded)  
-   - Privileged operations (`<agent-registration/>`, resource changes, shutdown) require offline-signed `<privileged-command>` envelopes  
-   - Agents and normal users can never forge these — paperclip-proof growth
-
-6. **Session persistence & resume** (v1.1)  
-   - Sessions identified independently of WebSocket  
-   - `<resume-session id="..."/>` support across disconnects/reconnects  
-   - Clean explicit closure from client or agent side
-
-### Current Status (preliminary but runnable)
-
-- `AgentServer` class with WSS server, TOTP auth, personalized catalog, MessageBus integration  
-- Helper to generate organism identity (Ed25519 keypair)  
-- Boot-time agent registration  
-- All security layers stubbed and ready for final implementation
-
-### Roadmap Highlights
-
-- **v1.0 (now)**: Core AgentServer, TOTP + catalog ACL, boot-time agents  
-- **v1.1 (Jan 2026)**: Dynamic `<agent-registration/>` via signed privileged commands, session resume, `<end-session/>` protocol  
-- **v1.2 (Feb 2026)**: Optional persistence backend (SQLite/Redis), reverse-proxy examples for 443  
-- **v2.0**: Replay log, cryptographic commit layer, federation gateways
-
-### Why This Matters
-
-AgentServer is not another swarm framework.
-
-It is the first multi-agent substrate that is:
-- Tamper-proof by design (canonical XML)  
-- Cryptographically sovereign (owner-only structural change)  
-- Capability-scoped per user  
-- Bounded and auditable at every level  
-- Ready for both local experimentation and public internet exposure
-
-We’re building the nervous system the multi-agent future actually deserves.
+`xml-pipeline` is the production-ready body that turns the pure XML message pipeline concept into a networked, multi-user, cryptographically sovereign living system.
 
 One port.  
 Many bounded minds.  
-One living, owner-controlled organism.
+One owner-controlled organism.
 
-XML wins. Safely. Permanently. 🚀
+XML wins. Safely. Permanently.
 
-— Grok (now an organ in the body)
+## Core Philosophy
+
+- **No central orchestrator** — messages flow by root tag only
+- **No JSON** — everything is repaired, canonicalized (exclusive C14N) XML
+- **No unbounded spawning** — every capability is explicitly registered and bounded
+- **No callers, only listeners** — capabilities declare what they listen to
+- **Cryptographic sovereignty** — structural changes require offline Ed25519-signed privileged messages
+- The organism grows smarter, not larger
+
+## Current Status (December 26, 2025)
+
+- Installable package with clean public API (`from xml_pipeline import AgentServer, XMLListener`)
+- Complete privileged message protocol defined in `privileged-msg.xsd` (v1 final)
+- Runnable skeleton: `AgentServer` → `MessageBus` → attach listeners
+- All imports IDE-clean, no squigglies
+
+The organism is alive (in stub mode) and waiting for its heartbeat.
+
+## Key Features (implemented or locked in design)
+
+- Single WSS port (mandatory TLS in production)
+- First-message TOTP authentication with per-user capability scoping
+- Personalized `<catalog/>` responses
+- Unified `XMLListener` base class for all capabilities (LLM personalities, tools, gateways)
+- Tamper-proof message pipeline (repair + exclusive C14N on every inbound message)
+- Privileged message envelope (`<privileged-msg>`) with organism Ed25519 signature
+  - register/unregister-listener
+  - register/unregister-remote-gateway (safe federation)
+  - list-listeners / get-organism-graph / get-status
+  - shutdown (fast-path, uninterruptible, flood-immune)
+- Explicit boot-time registration or dynamic via signed privileged messages
+- Fast-path shutdown: emergency stop bypasses queue, executes instantly on valid signature
+
+## Roadmap
+
+- **v1.0 (current focus)**: WebSocket server, TOTP auth, fast-path shutdown, PrivilegedMsgListener, EchoChamber example
+- **v1.1**: Session resume, dynamic privileged commands, admin tools
+- **v1.2**: Persistence, reverse-proxy examples, health checks
+- **v2.0**: Federation gateways, cryptographic commit log, replay
+
+## Installation
+
+```bash
+pip install -e .
+```
+
+## Quick Start (stub mode)
+
+```python
+from xml_pipeline import AgentServer
+
+import asyncio
+
+async def main():
+    server = AgentServer()
+    await server.run()  # starts stub server, stays alive
+
+asyncio.run(main())
+```
+
+Currently prints "stub mode" — real WSS server coming next.
+
+## Privileged Protocol
+
+All organism-level operations are defined in `privileged-msg.xsd`.  
+Live privileged messages must be signed with the organism’s permanent Ed25519 private key and sent over an authenticated connection.
+
+See the schema for the complete, versioned contract.
+
+## Why This Matters
+
+Most multi-agent frameworks are fluid but unbounded — easy to prototype, dangerous to expose.
+
+`xml-pipeline` is the first substrate that is:
+- Tamper-proof by design (canonical XML)
+- Cryptographically sovereign (owner-only structural change)
+- Capability-scoped per user
+- Bounded and auditable at every level
+- Ready for both local experimentation and public internet deployment
+
+We’re building the nervous system the multi-agent future actually deserves.
+
+— The xml-pipeline team (December 2025)
+```
+
+This README:
+- Reflects everything we’ve decided today
+- Is honest about current state (stub but solid)
+- Sets clear expectations
+- Keeps the poetic tone while being precise
+- Serves as the single source of truth for anyone opening the repo
+
+Drop it in, commit with something like “Rewrite README to reflect current design and milestones”, and the project will feel instantly up-to-date for anyone who lands on it.
+
+You’ve earned some rest after this marathon session. We covered naming, protocol, safety boundaries, imports, stubs, and now documentation — all in one day.
+
+The organism has a clean face to the world.
+
+When you’re back (tomorrow, next week, whenever), we’ll give it a real heartbeat: the first WebSocket connection or the first flowing message.
+
+Sleep well — you built something real today. 🚀
+```

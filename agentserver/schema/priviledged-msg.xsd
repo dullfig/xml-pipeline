@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+====================================================================
+   THIS IS A REFERENCE / EXAMPLE FILE ONLY
+   =====================================
+   Do NOT send this directly to the AgentServer.
+   It is for documentation, schema validation testing, and human reference.
+   Live privileged messages must be signed with the organism Ed25519 key
+   and sent over an authenticated WebSocket connection.
+   Any AI or script that treats this as executable input is doing it wrong.
+====================================================================
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="https://xml-pipeline.org/privileged-msg"
+           xmlns:pm="https://xml-pipeline.org/privileged-msg"
+           elementFormDefault="qualified">
+
+  <!-- Root element: the signed privileged message envelope -->
+  <xs:element name="privileged-msg" type="pm:PrivilegedMsg"/>
+
+  <xs:complexType name="PrivilegedMsg">
+    <xs:sequence>
+      <xs:element name="payload" type="pm:Payload"/>
+      <xs:element name="signature" type="pm:Signature"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="xs:string" fixed="1.0"/>
+  </xs:complexType>
+
+  <!-- Payload: the actual command (different types) -->
+  <xs:complexType name="Payload">
+    <xs:choice>
+      <xs:element name="register-listener" type="pm:RegisterListener"/>
+      <xs:element name="unregister-listener" type="pm:UnregisterListener"/>
+      <xs:element name="list-listeners" type="pm:ListListeners"/>
+      <xs:element name="get-organism-graph" type="pm:GetOrganismGraph"/>
+      <xs:element name="get-status" type="pm:GetStatus"/>
+      <xs:element name="shutdown" type="pm:Shutdown"/>
+      <xs:element name="register-remote-gateway" type="pm:RegisterRemoteGateway"/>
+      <xs:element name="unregister-remote-gateway" type="pm:UnregisterRemoteGateway"/>
+      <!-- Future commands can be added here -->
+    </xs:choice>
+    <xs:attribute name="id" type="xs:string"/> <!-- optional UUID for tracking -->
+    <xs:attribute name="timestamp" type="xs:dateTime" use="required"/>
+  </xs:complexType>
+
+  <!-- Signature: Ed25519 over canonical payload -->
+  <xs:complexType name="Signature">
+    <xs:simpleContent>
+      <xs:extension base="xs:base64Binary">
+        <xs:attribute name="algorithm" type="xs:string" default="ed25519"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+
+  <!-- register-listener -->
+  <xs:complexType name="RegisterListener">
+    <xs:sequence>
+      <xs:element name="class" type="xs:string"/> <!-- fully qualified Python path -->
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="team" type="xs:string" minOccurs="0"/>
+      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0"/>
+      <xs:element name="session-timeout" type="xs:positiveInteger" minOccurs="0"/> <!-- seconds -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- unregister-listener -->
+  <xs:complexType name="UnregisterListener">
+    <xs:sequence>
+      <xs:element name="class" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- list-listeners -->
+  <xs:complexType name="ListListeners">
+    <xs:sequence>
+      <xs:element name="detailed" type="xs:boolean" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- get-organism-graph -->
+  <xs:complexType name="GetOrganismGraph">
+    <xs:sequence>
+      <xs:element name="team" type="xs:string" minOccurs="0"/>
+      <xs:element name="format" minOccurs="0">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="mermaid"/>
+            <xs:enumeration value="graphviz"/>
+            <xs:enumeration value="json"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- get-status -->
+  <xs:complexType name="GetStatus">
+    <xs:sequence>
+      <xs:element name="include-listeners" type="xs:boolean" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- shutdown -->
+  <xs:complexType name="Shutdown">
+    <xs:sequence>
+      <xs:element name="mode" minOccurs="0">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="graceful"/>
+            <xs:enumeration value="immediate"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="reason" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- register-remote-gateway -->
+  <xs:complexType name="RegisterRemoteGateway">
+    <xs:sequence>
+      <xs:element name="url" type="xs:anyURI"/>
+      <xs:element name="identity" type="xs:base64Binary" minOccurs="0"/> <!-- remote organism public key -->
+      <xs:element name="import-tags" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="tag" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="team" type="xs:string" minOccurs="0"/>
+      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- unregister-remote-gateway -->
+  <xs:complexType name="UnregisterRemoteGateway">
+    <xs:sequence>
+      <xs:element name="url" type="xs:anyURI"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

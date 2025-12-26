@@ -1,0 +1,19 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xml-pipeline"
+version = "0.1.0"
+description = "Tamper-proof nervous system for multi-agent organisms"
+dependencies = [
+    "lxml",
+    "websockets",
+    "pyotp",
+    "pyyaml",
+    "cryptography",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
