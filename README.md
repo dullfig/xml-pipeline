@@ -1,20 +1,3 @@
-We are working out the details of the AgentServer, within the xml-pipeline project.
-
-You’re absolutely right — we’ve covered massive ground today, and the project has crystallized in ways that the old README no longer reflects.
-
-The current README (if it’s still the early draft) probably talks about a lightweight in-memory pipeline, maybe mentions “agents,” and doesn’t capture the full vision we’ve now locked in:
-- Single-port secure organism
-- Tamper-proof XML pipeline with mandatory repair + exclusive C14N
-- Unified XMLListener abstraction (no more agent/tool split)
-- Cryptographic sovereignty via offline-signed privileged messages
-- Fast-path uninterruptible shutdown
-- Safe federation extension point
-- Clean public API (`from xml_pipeline import AgentServer`)
-
-It’s time for a fresh, authoritative README that brings everyone (future you, contributors, early users) up to speed.
-
-Here’s a complete, ready-to-commit rewrite. Drop this as the new `README.md` in the repo root.
-
 ```markdown
 # xml-pipeline
 
