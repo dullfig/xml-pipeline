@@ -52,14 +52,32 @@
     </xs:simpleContent>
   </xs:complexType>
 
-  <!-- register-listener -->
+  <!-- register - listener -->
   <xs:complexType name="RegisterListener">
     <xs:sequence>
-      <xs:element name="class" type="xs:string"/> <!-- fully qualified Python path -->
-      <xs:element name="description" type="xs:string" minOccurs="0"/>
-      <xs:element name="team" type="xs:string" minOccurs="0"/>
-      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0"/>
-      <xs:element name="session-timeout" type="xs:positiveInteger" minOccurs="0"/> <!-- seconds -->
+      <xs:element name="class" type="xs:string" /> <!-- fully qualified Python path -->
+      <xs:element name="description" type="xs:string" minOccurs="0" />
+      <xs:element name="team" type="xs:string" minOccurs="0" />
+      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0" />
+      <xs:element name="session-timeout" type="xs:positiveInteger" minOccurs="0" /> <!-- seconds -->
+
+      <!-- Known peers extension for topology awareness -->
+      <xs:element name="known-peers" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="group" minOccurs="0" maxOccurs="unbounded">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="agent" type="xs:string" maxOccurs="unbounded"/>
+                </xs:sequence>
+                <xs:attribute name="role" type="xs:string" use="required"/>
+                <xs:attribute name="description" type="xs:string"/>
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+
     </xs:sequence>
   </xs:complexType>
 

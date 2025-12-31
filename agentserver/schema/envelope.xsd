@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="https://xml-pipeline.org/ns/envelope/1"
+           elementFormDefault="qualified">
+
+  <!-- The universal envelope for all non-privileged messages -->
+  <xs:element name="message">
+    <xs:complexType>
+      <xs:sequence>
+        <!-- Metadata block -->
+        <xs:element name="meta">
+          <xs:complexType>
+            <xs:sequence>
+              <xs:element name="from" type="xs:string" minOccurs="1"/>
+              <xs:element name="to" type="xs:string" minOccurs="0"/>
+              <xs:element name="convo_id" type="xs:string" minOccurs="0"/>
+              <!-- Reserved for future standard fields (timestamp, priority, etc.) -->
+              <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+          </xs:complexType>
+        </xs:element>
+
+        <!-- Exactly one payload element from any foreign namespace -->
+        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="1"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+</xs:schema>
