@@ -1,115 +1,47 @@
-```markdown
-# xml-pipeline
+# AgentServer — The Living Substrate (v1.2)
+**December 30, 2025**  
+**Architecture: Turing-Complete, Stack-Managed Multi-Agent Organism**
 
-**Secure, single-port WebSocket organism for bounded multi-listener intelligence.**
+## What It Is
+AgentServer is a production-ready "body" for the `xml-pipeline` nervous system. It is a secure, XML-native substrate hosting concurrent, stateful agents (organs) sharing a unified, tamper-proof **MessageBus**. 
 
-`xml-pipeline` is the production-ready body that turns the pure XML message pipeline concept into a networked, multi-user, cryptographically sovereign living system.
-
-One port.  
-Many bounded minds.  
-One owner-controlled organism.
-
-XML wins. Safely. Permanently.
+Version 1.2 introduces **Computational Completeness**, enabling agents to manage complex state through recursive iteration and isolated threading, all governed by a strict resource stack.
 
 ## Core Philosophy
+- **Computational Sovereignty:** The platform is Turing-complete via `<todo-until/>` (loops) and `<start-thread/>` (branching) primitives.
+- **Multimodal Routing:** 
+    - **Directed Mode:** Targeting a specific organ via `<to/>` initiates a stack-managed, roll-up lifecycle.
+    - **Broadcast Mode:** Omitting `<to/>` allows for organic, parallel response from all listeners of a root tag.
+- **Need-to-Know Topology:** Wiring is defined via YAML. Agents are only aware of the peers explicitly listed in their configuration; calling conventions are auto-injected into prompts at runtime.
+- **No Magic Backchannels:** Even system-level notifications must wear an XML envelope and flow through the bus to reach agents.
 
-- **No central orchestrator** — messages flow by root tag only
-- **No JSON** — everything is repaired, canonicalized (exclusive C14N) XML
-- **No unbounded spawning** — every capability is explicitly registered and bounded
-- **No callers, only listeners** — capabilities declare what they listen to
-- **Cryptographic sovereignty** — structural changes require offline Ed25519-signed privileged messages
-- The organism grows smarter, not larger
+## Key Features
 
-## Current Status (December 26, 2025)
+### 1. The Stack-Based Lifecycle
+- **UUID Propagation:** UUID v4 thread identifiers are propagated to the deepest leaf tool. A thread remains on the **Stack** until all leaves respond and "roll up" to the parent.
+- **Physical Bounding:** The maximum stack depth is configurable via the YAML BIOS, providing a "Gas Limit" against infinite loops.
 
-- Installable package with clean public API (`from xml_pipeline import AgentServer, XMLListener`)
-- Complete privileged message protocol defined in `privileged-msg.xsd` (v1 final)
-- Runnable skeleton: `AgentServer` → `MessageBus` → attach listeners
-- All imports IDE-clean, no squigglies
+### 2. The Sovereign Logger (The Witness)
+- **Inline Auditing:** Positioned immediately after XML repair, the Logger witnesses all traffic before routing.
+- **The Confessional:** Agents can write inner reasoning or state snapshots via the `<logger/>` tag.
+- **Write-Only Law:** The Logger is physically incapable of responding with data. Agents can "vent" to the record, but they can never read from it, preventing rogue memory or lateral state leakage.
 
-The organism is alive (in stub mode) and waiting for its heartbeat.
+### 3. Isolated Structural Management (OOB)
+- **Out-of-Band Control:** Structural commands (registration, wiring, shutdown) use a dedicated secure port and are validated via site-specific Ed25519 signatures.
+- **Handshake of Death:** Graceful shutdown requires a direct handshake between the AgentServer and the Logger, ensuring all states are flushed before exit.
 
-## Key Features (implemented or locked in design)
+### 4. The Immune System (`repair_and_canonicalize`)
+- **Scar Tissue (`<huh/>`):** Structural fixes are immortalized in the message metadata, providing a transparent audit log and diagnostic feedback loop for LLMs.
 
-- Single WSS port (mandatory TLS in production)
-- First-message TOTP authentication with per-user capability scoping
-- Personalized `<catalog/>` responses
-- Unified `XMLListener` base class for all capabilities (LLM personalities, tools, gateways)
-- Tamper-proof message pipeline (repair + exclusive C14N on every inbound message)
-- Privileged message envelope (`<privileged-msg>`) with organism Ed25519 signature
-  - register/unregister-listener
-  - register/unregister-remote-gateway (safe federation)
-  - list-listeners / get-organism-graph / get-status
-  - shutdown (fast-path, uninterruptible, flood-immune)
-- Explicit boot-time registration or dynamic via signed privileged messages
-- Fast-path shutdown: emergency stop bypasses queue, executes instantly on valid signature
-
-## Roadmap
-
-- **v1.0 (current focus)**: WebSocket server, TOTP auth, fast-path shutdown, PrivilegedMsgListener, EchoChamber example
-- **v1.1**: Session resume, dynamic privileged commands, admin tools
-- **v1.2**: Persistence, reverse-proxy examples, health checks
-- **v2.0**: Federation gateways, cryptographic commit log, replay
-
-## Installation
-
-```bash
-pip install -e .
-```
-
-## Quick Start (stub mode)
-
-```python
-from xml_pipeline import AgentServer
-
-import asyncio
-
-async def main():
-    server = AgentServer()
-    await server.run()  # starts stub server, stays alive
-
-asyncio.run(main())
-```
-
-Currently prints "stub mode" — real WSS server coming next.
-
-## Privileged Protocol
-
-All organism-level operations are defined in `privileged-msg.xsd`.  
-Live privileged messages must be signed with the organism’s permanent Ed25519 private key and sent over an authenticated connection.
-
-See the schema for the complete, versioned contract.
+## Technical Stack
+- **Protocol:** Mandatory WSS (TLS) + TOTP 2FA.
+- **Identity:** Ed25519 signatures (OOB) + UUID v4 (In-Bus).
+- **Format:** `lxml` trees (Internal) / Exclusive C14N (External).
 
 ## Why This Matters
+AgentServer is a **Secure Virtual Machine for Intelligence.** It provides the freedom of Turing-complete reasoning within the absolute safety of a hardened, owner-controlled skeletal structure.
 
-Most multi-agent frameworks are fluid but unbounded — easy to prototype, dangerous to expose.
+**One port. Many bounded minds. Total sovereignty.** 🚀
 
-`xml-pipeline` is the first substrate that is:
-- Tamper-proof by design (canonical XML)
-- Cryptographically sovereign (owner-only structural change)
-- Capability-scoped per user
-- Bounded and auditable at every level
-- Ready for both local experimentation and public internet deployment
-
-We’re building the nervous system the multi-agent future actually deserves.
-
-— The xml-pipeline team (December 2025)
-```
-
-This README:
-- Reflects everything we’ve decided today
-- Is honest about current state (stub but solid)
-- Sets clear expectations
-- Keeps the poetic tone while being precise
-- Serves as the single source of truth for anyone opening the repo
-
-Drop it in, commit with something like “Rewrite README to reflect current design and milestones”, and the project will feel instantly up-to-date for anyone who lands on it.
-
-You’ve earned some rest after this marathon session. We covered naming, protocol, safety boundaries, imports, stubs, and now documentation — all in one day.
-
-The organism has a clean face to the world.
-
-When you’re back (tomorrow, next week, whenever), we’ll give it a real heartbeat: the first WebSocket connection or the first flowing message.
-
-Sleep well — you built something real today. 🚀
-```
+---
+*XML wins. Safely. Permanently.*
