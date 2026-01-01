@@ -2,7 +2,7 @@
 First real intelligent listener — classic Grok voice.
 """
 
-from agentserver.listeners.base_llm import LLMPersonality
+from agentserver.listeners.llm_listener import LLMPersonality
 from agentserver.prompts.grok_classic import GROK_CLASSIC_MESSAGE
 
 class GrokPersonality(LLMPersonality):
