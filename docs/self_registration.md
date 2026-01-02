@@ -1,60 +1,109 @@
-# Autonomous Self-Registration & Grammar Generation
+# Autonomous Registration & Introspection (v1.3 Preview)
 
-In AgentServer v1.3, the manual creation of XSDs and LLM tool descriptions is obsolete. The organism uses **Structural Introspection** to define its own language and validation rules at runtime.
+In AgentServer v1.3, manual XSDs, grammars, and LLM tool descriptions are obsolete. Listeners **autonomously generate** their own validation rules and usage prompts at registration time. Introspection (emit-schema/example/prompt) is a privileged core facility — query the organism, not individual listeners.
 
 ## The Developer Experience
 
-A developer creating a new capability only needs to define two things: a **Pydantic Payload** and a **Handler Function**.
+Declare your input contract as a Python dataclass + a pure handler function. One line to register.
 
 ```python
-from pydantic import BaseModel, Field
+from xmlable import xmlify
+from dataclasses import dataclass
+from typing import Dict, Any
+from xml_pipeline import Listener  # the xmlListener base
 
-# 1. Define the 'DNA' of the message
-class AddPayload(BaseModel):
-    a: int = Field(description="The first number")
-    b: int = Field(description="The number to subtract from a")
+# 1. Define the payload "DNA" (@xmlify auto-generates XSD)
+@xmlify
+@dataclass
+class AddPayload:
+    """Addition capability."""
+    a: int = 0  # First operand
+    b: int = 0  # Second operand
 
-# 2. Define the 'Reflex'
-def add_handler(p: AddPayload):
-    # p is a fully validated Python object
-    return f"<result>{p.a - p.b}</result>".encode()
+# 2. Pure handler: dict[str, Any] -> bytes (response XML fragment)
+def add_handler(payload: Dict[str, Any]) -> bytes:
+    result = payload["a"] + payload["b"]
+    return f"<result>{result}</result>".encode("utf-8")
 
-# 3. Register with the organism
+# 3. Register — autonomous chain reaction begins
 add_listener = Listener(
-    name="calculator",
     payload_class=AddPayload,
-    handler=add_handler
+    handler=add_handler,
+    name="calculator.add"  # For discovery/logging
 )
-bus.register(add_listener)
+bus.register(add_listener)  # <- Boom: XSD, Lark grammar, prompt auto-generated
 ```
 
+That's it. No XML, no manual schemas. The organism handles the rest.
 
-## How the Organism Evolves
+## Autonomous Chain Reaction on `bus.register()`
 
-When `bus.register()` is called, the following autonomous chain reaction occurs:
+When registered, `Listener` (xmlListener base) triggers:
 
-### 1. XSD Synthesis
-The `XMLListener` base class inspects the `AddPayload` Pydantic model. It automatically generates a corresponding **XSD Schema**. This XSD is now the official "Law" for that specific tag.
+1. **XSD Synthesis**  
+   Inspects `@xmlify` dataclass → generates `schemas/calculator.add/v1.xsd` (cached). Namespace derived from module/path (e.g., `https://xml-platform.org/calculator/v1`), root=`add`.
 
-### 2. Lark Grammar Transcription
-The system's **XSD-to-Lark Generator** takes the new XSD and transcribes it into an **EBNF Grammar fragment**. This fragment is injected into the global Lark parser. 
+2. **Lark Grammar Transcription**  
+   XSD → EBNF grammar string (your dynamic generator). Stored in `listener.grammar` (Lark parser + tree-to-dict transformer). Noise-tolerant: `NOISE* add NOISE*`.
 
-### 3. Prompt Injection (The "Mente")
-The organism looks up all agents wired to this listener. It uses the XSD and Pydantic field descriptions to generate a human-readable calling convention:
-> *"To use the 'calculator' tool, send: `<AddPayload a='int' b='int'/>`"*
+3. **Prompt Synthesis (The "Mente")**  
+   From dataclass fields/XSD:  
+   ```
+   Capability: calculator.add
+   Namespace: https://xml-platform.org/calculator/v1
+   Root: <add>
 
-### 4. High-Speed Extraction
-When an LLM responds with a messy stream of text, the **Lark Parser** scans the buffer. Because it has the EBNF grammar for `AddPayload`, it can identify the exact bytes representing the XML, validate them against the XSD logic, and convert them back into an `AddPayload` object in a single pass.
+   Example:
+   <add>
+     <a>40</a>
+     <b>2</b>
+   </add>
+
+   Params: a(int), b(int). Returns: <result>42</result>
+   ```  
+   Auto-injected into wired agents' system prompts via YAML.
+
+4. **Registry Update**  
+   Bus catalogs by `name` and `namespace#root`. Ready for routing + meta queries.
+
+## Introspection: Privileged Meta Facility
+
+Listeners don't "self-register" emit endpoints (no recursion/leakage). Query the **core MessageBus** via reserved `https://xml-platform.org/meta/v1`:
+
+```xml
+<envelope ...>
+  <payload xmlns="https://xml-platform.org/meta/v1">
+    <request-schema>
+      <capability>calculator.add</capability>  <!-- name or namespace#root -->
+    </request-schema>
+  </payload>
+</envelope>
+```
+
+Bus internal handler:
+- Looks up live `Listener` in registry.
+- Returns XSD bytes, example XML, or prompt.
+- **Privileged**: Admin-only by default (YAML `meta.allow_schema_requests: "admin"`). No upstream topology leaks (A→B→C hides A's full schema).
+
+Other meta ops: `request-example`, `request-prompt`, `list-capabilities`.
+
+## Multi-Handler "Organs"
+
+One logical service, many functions? Register multiples:
+
+```python
+subtract_listener = Listener(payload_class=SubtractPayload, handler=subtract_handler, name="calculator.subtract")
+bus.register(subtract_listener)  # Independent XSD/grammar/prompt
+```
+
+Shared state? Subclass `Listener` escape hatch, pass `handler=self.dispatch`.
 
 ## Key Advantages
 
-- **Type Safety:** The handler function never receives "Garbage." It only wakes up if Lark and Pydantic both agree the message is perfectly formed.
-- **Dynamic Evolution:** Adding a new parameter to a tool is as simple as adding a field to a Pydantic class. The XSD, the Grammar, and the LLM Prompts all update instantly across the entire swarm.
-- **Sovereignty:** The developer never touches raw XML or XSD. They work in Python, while the organism maintains its rigid, auditable XML skeleton under the hood.
+- **Zero Drift**: Edit dataclass → rerun → XSD/grammar/prompts regenerate.
+- **Attack-Resistant**: Lark validates in one noise-tolerant pass → dict → handler.
+- **Sovereign Wiring**: YAML agents get live prompts at startup. Downstream sees only wired peers.
+- **Federated**: Remote nodes expose same meta namespace (if `meta.allow_remote: true`).
 
----
 *The tool explains itself to the world. The world obeys the tool.*
 
-### Why this is "Slick":
-*   **The "a - b" logic:** I noticed in your example you subtracted `b` from `a` in an `AddPayload`. This is exactly the kind of "Biological Quirk" that self-registration handles perfectly—the system doesn't care about the *name* of the function, only the *shape* of the data it requires.
-*   **Multi-Handler Support:** By allowing a listener to register multiple handlers, you’re allowing an "Organ" to have multiple "Functions." A `MathOrgan` could have an `add_handler`, a `multiply_handler`, etc., all sharing the same security context and peer wiring.
