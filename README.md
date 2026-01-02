@@ -1,47 +1,45 @@
-# AgentServer — The Living Substrate (v1.2)
-**December 30, 2025**  
-**Architecture: Turing-Complete, Stack-Managed Multi-Agent Organism**
+# AgentServer — The Living Substrate (v1.3)
+**January 01, 2026**  
+**Architecture: Autonomous Grammar-Driven, Turing-Complete Multi-Agent Organism**
 
 ## What It Is
-AgentServer is a production-ready "body" for the `xml-pipeline` nervous system. It is a secure, XML-native substrate hosting concurrent, stateful agents (organs) sharing a unified, tamper-proof **MessageBus**. 
-
-Version 1.2 introduces **Computational Completeness**, enabling agents to manage complex state through recursive iteration and isolated threading, all governed by a strict resource stack.
+AgentServer is a production-ready substrate for the `xml-pipeline` nervous system. Version 1.3 introduces **Autonomous Grammar Generation**, where the organism defines its own language and validation rules in real-time using Lark and XSD automation.
 
 ## Core Philosophy
-- **Computational Sovereignty:** The platform is Turing-complete via `<todo-until/>` (loops) and `<start-thread/>` (branching) primitives.
-- **Multimodal Routing:** 
-    - **Directed Mode:** Targeting a specific organ via `<to/>` initiates a stack-managed, roll-up lifecycle.
-    - **Broadcast Mode:** Omitting `<to/>` allows for organic, parallel response from all listeners of a root tag.
-- **Need-to-Know Topology:** Wiring is defined via YAML. Agents are only aware of the peers explicitly listed in their configuration; calling conventions are auto-injected into prompts at runtime.
-- **No Magic Backchannels:** Even system-level notifications must wear an XML envelope and flow through the bus to reach agents.
+- **Autonomous DNA:** The system never requires a human to explain tool usage to an agent. Listeners automatically generate their own XSDs based on their parameters, which are then converted into **Lark Grammars** for high-speed, one-pass scanning and validation.
+- **Grammar-Locked Intelligence:** Dirty LLM streams are scanned by Lark. Only text that satisfies the current organism's grammar is extracted and validated. Everything else is ignored as "Biological Noise."
+- **Parameter-Keyed Logic:** Messages are delivered to agents as pristine Python dictionaries, automatically keyed to the listener's registered parameters.
+- **Computational Sovereignty:** Turing-complete via `<todo-until/>` and `<start-thread/>` primitives, governed by a strict resource stack.
 
 ## Key Features
 
-### 1. The Stack-Based Lifecycle
-- **UUID Propagation:** UUID v4 thread identifiers are propagated to the deepest leaf tool. A thread remains on the **Stack** until all leaves respond and "roll up" to the parent.
-- **Physical Bounding:** The maximum stack depth is configurable via the YAML BIOS, providing a "Gas Limit" against infinite loops.
+### 1. The Autonomous Language Layer
+- **XSD-to-Lark Generator:** A core utility that transcribes XSD schema definitions into EBNF Lark grammars. This enables the server to search untrusted data streams for specific XML patterns with mathematical precision.
+- **Auto-Descriptive Organs:** The base `XMLListener` class inspects its own instantiation parameters to generate a corresponding XSD. The tool itself tells the world how to use it.
+- **Protocol Agnostic:** To add a new field (like `<cc/>`) to the entire swarm, you simply update the central XSD. The entire organism's grammar updates instantly.
+- **[Read Further: Self-Registration & Autonomous Grammars](docs/self_registration.md)**
 
-### 2. The Sovereign Logger (The Witness)
-- **Inline Auditing:** Positioned immediately after XML repair, the Logger witnesses all traffic before routing.
-- **The Confessional:** Agents can write inner reasoning or state snapshots via the `<logger/>` tag.
-- **Write-Only Law:** The Logger is physically incapable of responding with data. Agents can "vent" to the record, but they can never read from it, preventing rogue memory or lateral state leakage.
+### 2. The Stack-Based Lifecycle
+- **UUID Custody:** UUID v4 thread identifiers are born via `<spawn-thread/>` and managed on a physical stack.
+- **Leaf-to-Root Roll-up:** Threads remain active until the final leaf responds, ensuring perfect resource tracking and preventing runaway processes.
 
-### 3. Isolated Structural Management (OOB)
-- **Out-of-Band Control:** Structural commands (registration, wiring, shutdown) use a dedicated secure port and are validated via site-specific Ed25519 signatures.
-- **Handshake of Death:** Graceful shutdown requires a direct handshake between the AgentServer and the Logger, ensuring all states are flushed before exit.
+### 3. The Sovereign Witness
+- **Inline Auditing:** The Logger witnesses all traffic before routing.
+- **The Confessional:** Agents record inner thoughts via `<logger/>`. The Logger is **strictly write-only** to prevent rogue memory or shared-state leaks.
 
-### 4. The Immune System (`repair_and_canonicalize`)
-- **Scar Tissue (`<huh/>`):** Structural fixes are immortalized in the message metadata, providing a transparent audit log and diagnostic feedback loop for LLMs.
+### 4. Isolated Structural Control
+- **Out-of-Band (OOB) Port:** Structural commands (registration, wiring, shutdown) use a dedicated port and Ed25519 signatures, ensuring "Life/Death" commands cannot be delayed by agent traffic.
 
 ## Technical Stack
+- **Parsing:** Lark (EBNF Grammar) + `lxml` (Validation/C14N).
 - **Protocol:** Mandatory WSS (TLS) + TOTP 2FA.
-- **Identity:** Ed25519 signatures (OOB) + UUID v4 (In-Bus).
+- **Identity:** Ed25519 (OOB) + UUID v4 (In-Bus).
 - **Format:** `lxml` trees (Internal) / Exclusive C14N (External).
 
 ## Why This Matters
-AgentServer is a **Secure Virtual Machine for Intelligence.** It provides the freedom of Turing-complete reasoning within the absolute safety of a hardened, owner-controlled skeletal structure.
+AgentServer v1.3 is the first multi-agent substrate where the **language is the security.** By automating the link between XSD, Grammar, and LLM Prompts, you’ve created an organism that is impossible to "misunderstand." It is a self-documenting, self-validating, and self-regulating intelligent system.
 
-**One port. Many bounded minds. Total sovereignty.** 🚀
+**One port. Many bounded minds. Autonomous Evolution.** 🚀
 
 ---
 *XML wins. Safely. Permanently.*
