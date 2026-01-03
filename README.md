@@ -1,4 +1,6 @@
 # AgentServer — The Living Substrate (v1.3)
+***"It just works..."***
+
 **January 01, 2026**  
 **Architecture: Autonomous Grammar-Driven, Turing-Complete Multi-Agent Organism**
 
@@ -29,6 +31,7 @@ AgentServer is a production-ready substrate for the `xml-pipeline` nervous syste
 
 ### 4. Isolated Structural Control
 - **Out-of-Band (OOB) Port:** Structural commands (registration, wiring, shutdown) use a dedicated port and Ed25519 signatures, ensuring "Life/Death" commands cannot be delayed by agent traffic.
+- **[Read Further: YAML Configuration System](docs/configuration.md)**
 
 ## Technical Stack
 - **Parsing:** Lark (EBNF Grammar) + `lxml` (Validation/C14N).
