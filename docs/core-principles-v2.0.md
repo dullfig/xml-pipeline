@@ -89,4 +89,10 @@ These principles are the single canonical source of truth for the project. All d
 - Caller idles naturally; wakeup messages bubble back via standard tracing.
 - Enables recurrent tasks (e.g., periodic monitoring) without blocking or external schedulers.
 
+## Bounded Stateful Listeners
+- Pure tools remain stateless.
+- Stateful capabilities (e.g., calculator memory, game state) store data per thread path UUID.
+- Ensures isolation across conversations, automatic cleanup on idle, and minimal mutable state.
+- Handler closes over or receives UUID for access — still oblivious to readable path.
+
 These principles are now locked. All existing docs will be updated to match this file exactly. Future changes require explicit discussion and amendment here first.

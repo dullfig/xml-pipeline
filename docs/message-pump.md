@@ -4,6 +4,46 @@ The AgentServer message pump processes individual messages through a single, lin
 
 ```mermaid
 flowchart TD
+    subgraph Ingress
+        A[Raw Bytes] --> B[Repair + C14N]
+        B --> C[Enqueue to Thread Queue]
+    end
+
+    subgraph DispatcherLoop
+        D[Dequeue Next Message] --> E{Envelope Valid?}
+        E -->|No| F[Discard / System Error]
+        E -->|Yes| G{Payload Namespace?}
+        G -->|Meta| H["Core Handler<br>(raw payload)"]
+        G -->|Normal| I[Validate Payload<br>vs Cached XSD]
+        I -->|Fail| F
+        I -->|Pass| J["Deserialize to<br>@xmlify Dataclass"]
+        J --> K["Call Handler<br>(typed instance → bytes)"]
+        H --> L["Wrap bytes in<br>&ltdummy&gt&lt/dummy&gt"]
+        K --> L
+    end
+
+    subgraph Response
+        L --> M[Repair + Extract<br>Multi-Payloads]
+        M --> N{Extracted Payloads?}
+        N -->|0| O["Optional: Inject<br>&ltagent-error&gt or Idle"]
+        N -->|1 or more| P[For Each Payload:]
+        P --> Q[Determine Target Listener]
+        Q --> R["Append Target Name<br>to Current Path<br>(new thread ID)"]
+        R --> S["Inject <from><br>(listener name)"]
+        S --> T["Enqueue New Message(s)<br>to Deepened Path(s)<br>(parallel if multi)"]
+        T --> U[On Response Bubbling:<br>Pop Last Segment<br>Route to Parent Path]
+    end
+
+    C --> DispatcherLoop
+    DispatcherLoop --> Response
+    Response --> DispatcherLoop
+    style Ingress fill:#f0f8ff
+    style DispatcherLoop fill:#f0fff0
+    style Response fill:#fff0f0
+```
+
+```mermaid
+flowchart TD
     subgraph MessagePump
     subgraph Init
     start([Start])
