@@ -91,24 +91,8 @@ async def add_handler(
     return f"<result>{result}</result>".encode("utf-8")
 ```
 
-### Handler Signature (Locked)
-```python
-async def handler(
-    payload: PayloadDataclass,      # Deserialized, XSD-validated instance
-    metadata: HandlerMetadata       # Small, trustworthy context
-) -> bytes:
-    ...
-```
-
-### HandlerMetadata (frozen, read-only)
-```python
-@dataclass(frozen=True)
-class HandlerMetadata:
-    thread_id: str                  # Opaque UUID matching <thread/> in envelope
-    from_id: str                    # Registered name of the sender (pump-injected, trustworthy)
-    own_name: str | None = None     # Populated ONLY for listeners with agent: true
-    is_self_call: bool = False      # Convenience flag: from_id == own_name
-```
+### Handler Signature and Metadata (Locked)
+See [handler-contract-v2.1.md](handler-contract-v2.1.md) for the canonical handler signature and metadata definition.
 
 Typical uses:
 - Stateful tools → key persistent data by `thread_id`
