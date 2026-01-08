@@ -68,6 +68,18 @@ xml-pipeline/
 │   ├── scripts/
 │   │   └── generate_organism_key.py
 │   └── __init__.py
+├── third_party/
+│   └── xmlable/
+│       ├── __init__.py
+│       ├── _errors.py
+│       ├── _io.py
+│       ├── _lxml_helpers.py
+│       ├── _manual.py
+│       ├── _user.py
+│       ├── _utils.py
+│       ├── _xmlify.py
+│       ├── _xobject.py
+│       └── py.typed
 ├── xml_pipeline.egg-info/
 │   ├── PKG-INFO
 │   ├── SOURCES.txt
