@@ -7,6 +7,7 @@ from typing import Type, TypeVar, Any
 from io import BytesIO
 
 from ._xmlify import xmlify
+from ._errors import XErrorCtx
 
 T = TypeVar("T")
 
@@ -19,7 +20,9 @@ def parse_element(cls: Type[T], element: _Element | ObjectifiedElement) -> T:
     """Direct in-memory deserialization from validated lxml Element."""
     xobject = _get_xobject(cls)
     obj_element = objectify.fromstring(etree.tostring(element))
-    return xobject.xml_in(obj_element, ctx=None)
+    # Create a root context for error tracing
+    ctx = XErrorCtx(trace=[cls.__name__])
+    return xobject.xml_in(obj_element, ctx=ctx)
 
 def parse_bytes(cls: Type[T], xml_bytes: bytes) -> T:
     tree = objectify.parse(BytesIO(xml_bytes))

@@ -6,8 +6,8 @@ The IXmlify interface
 
 from abc import ABC, abstractmethod
 from lxml.etree import _Element
-from xmlable._xobject import XObject
-from xmlable._utils import AnyType
+from ._xobject import XObject
+from ._utils import AnyType
 
 
 class IXmlify(ABC):

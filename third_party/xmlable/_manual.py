@@ -8,9 +8,9 @@ from typing import Any
 from lxml.etree import _Element, Element, _ElementTree, ElementTree
 from lxml.objectify import ObjectifiedElement
 
-from xmlable._utils import typename, AnyType, ordered_iter
-from xmlable._lxml_helpers import with_children, XMLSchema
-from xmlable._errors import XError, XErrorCtx, ErrorTypes
+from ._utils import typename, AnyType, ordered_iter
+from ._lxml_helpers import with_children, XMLSchema
+from ._errors import XError, XErrorCtx, ErrorTypes
 
 
 def validate_manual_class(cls: AnyType):

@@ -5,15 +5,52 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xml-pipeline"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tamper-proof nervous system for multi-agent organisms"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+keywords = ["xml", "multi-agent", "message-bus", "aiostream"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: AsyncIO",
+]
 dependencies = [
     "lxml",
     "websockets",
     "pyotp",
     "pyyaml",
     "cryptography",
+    "aiostream>=0.5",
+    "pyhumps",
+    "termcolor",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "mypy",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# Don't collect root __init__.py (has imports that break isolation)
+norecursedirs = [".git", "__pycache__", "*.egg-info"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["agentserver*", "third_party*"]

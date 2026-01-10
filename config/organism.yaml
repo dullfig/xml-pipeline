@@ -1,0 +1,24 @@
+# organism.yaml — Sample configuration for testing the message pump
+#
+# This defines a simple "hello world" organism with one listener.
+
+organism:
+  name: hello-world
+  port: 8765
+
+# Concurrency settings
+max_concurrent_pipelines: 50
+max_concurrent_handlers: 20
+max_concurrent_per_agent: 5
+
+# Thread scheduling: breadth-first or depth-first
+thread_scheduling: breadth-first
+
+listeners:
+  # The greeter listener responds to Greeting payloads
+  - name: greeter
+    payload_class: handlers.hello.Greeting
+    handler: handlers.hello.handle_greeting
+    description: Responds with a greeting message
+    agent: false
+    broadcast: false

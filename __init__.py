@@ -3,19 +3,26 @@
 xml-pipeline
 ============
 Secure, XML-centric multi-listener organism server.
+
+Stream-based message pump with aiostream for fan-out handling.
 """
 
-from agentserver.agentserver import AgentServer as AgentServer
-from agentserver.xml_listener import XMLListener as XMLListener
-from agentserver.message_bus import MessageBus as MessageBus
-from agentserver.message_bus import Session as Session
-
+from agentserver.message_bus import (
+    StreamPump,
+    ConfigLoader,
+    Listener,
+    MessageState,
+    HandlerMetadata,
+    bootstrap,
+)
 
 __all__ = [
-    "AgentServer",
-    "XMLListener",
-    "MessageBus",
-    "Session",
+    "StreamPump",
+    "ConfigLoader",
+    "Listener",
+    "MessageState",
+    "HandlerMetadata",
+    "bootstrap",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"  # Bumped for aiostream pump

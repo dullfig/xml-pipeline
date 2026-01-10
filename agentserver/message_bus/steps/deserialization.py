@@ -1,29 +1,29 @@
 """
 deserialization.py — Convert validated payload_tree into typed dataclass instance.
 
-After xsd_validation_step confirms the payload conforms to the listener's contract,
-this step uses the xmlable library to deserialize the lxml Element into the
-registered @xmlify dataclass.
-
-The resulting instance is placed in state.payload and handed to the handler.
+After xsd_validation_step confirms the payload conforms to the contract,
+this step uses our customized xmlable routines to deserialize the lxml Element
+directly in memory — no temporary files needed.
 
 Part of AgentServer v2.1 message pump.
 """
 
-from xmlable import from_xml  # from the xmlable library
+from lxml.etree import _Element
 from agentserver.message_bus.message_state import MessageState
+
+# Import the customized parse_element from your forked xmlable
+from third_party.xmlable import parse_element  # adjust path if needed
 
 
 async def deserialization_step(state: MessageState) -> MessageState:
     """
-    Deserialize the validated payload_tree into the listener's dataclass.
+    Deserialize the validated payload_tree into the listener's @xmlify dataclass.
 
     Requires:
-      - state.payload_tree valid against listener XSD
-      - state.metadata["payload_class"] set to the target dataclass (set at registration)
+      - state.payload_tree: validated lxml Element
+      - state.metadata["payload_class"]: the target dataclass
 
-    On success: state.payload = dataclass instance
-    On failure: state.error set with clear message
+    Uses the custom parse_element routine for direct in-memory deserialization.
     """
     if state.payload_tree is None:
         state.error = "deserialization_step: no payload_tree (previous step failed)"
@@ -35,8 +35,8 @@ async def deserialization_step(state: MessageState) -> MessageState:
         return state
 
     try:
-        # xmlable.from_xml handles namespace-aware deserialization
-        instance = from_xml(payload_class, state.payload_tree)
+        # Direct in-memory deserialization — fast and clean
+        instance = parse_element(payload_class, state.payload_tree)
         state.payload = instance
 
     except Exception as exc:  # pylint: disable=broad-except

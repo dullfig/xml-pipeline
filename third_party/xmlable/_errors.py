@@ -9,7 +9,7 @@ from typing import Any, Iterable
 from termcolor import colored
 from termcolor.termcolor import Color
 
-from xmlable._utils import typename, AnyType
+from ._utils import typename, AnyType
 
 
 def trace_note(trace: list[str], arrow_c: Color, node_c: Color):

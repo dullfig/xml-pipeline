@@ -20,8 +20,8 @@
           </xs:complexType>
         </xs:element>
 
-        <!-- Exactly one payload element from any foreign namespace -->
-        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="1"/>
+        <!-- Exactly one payload element (any namespace including no namespace) -->
+        <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="1"/>
       </xs:sequence>
     </xs:complexType>
   </xs:element>

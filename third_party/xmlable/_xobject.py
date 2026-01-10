@@ -13,9 +13,9 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, Type, get_args, TypeAlias, cast
 from types import GenericAlias
 
-from xmlable._utils import get, typename, firstkey, AnyType
-from xmlable._errors import XErrorCtx, ErrorTypes
-from xmlable._lxml_helpers import (
+from ._utils import get, typename, firstkey, AnyType
+from ._errors import XErrorCtx, ErrorTypes
+from ._lxml_helpers import (
     with_text,
     with_child,
     with_children,

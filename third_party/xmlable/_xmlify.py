@@ -15,11 +15,11 @@ from typing import Any, dataclass_transform, cast
 from lxml.objectify import ObjectifiedElement
 from lxml.etree import Element, _Element
 
-from xmlable._utils import get, typename, AnyType
-from xmlable._errors import XError, XErrorCtx, ErrorTypes
-from xmlable._manual import manual_xmlify
-from xmlable._lxml_helpers import with_children, with_child, XMLSchema
-from xmlable._xobject import XObject, gen_xobject
+from ._utils import get, typename, AnyType
+from ._errors import XError, XErrorCtx, ErrorTypes
+from ._manual import manual_xmlify
+from ._lxml_helpers import with_children, with_child, XMLSchema
+from ._xobject import XObject, gen_xobject
 
 
 def validate_class(cls: AnyType):

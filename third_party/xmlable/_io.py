@@ -10,9 +10,9 @@ from termcolor import colored
 from lxml.objectify import parse as objectify_parse
 from lxml.etree import _ElementTree
 
-from xmlable._utils import typename
-from xmlable._xobject import is_xmlified
-from xmlable._errors import ErrorTypes
+from ._utils import typename
+from ._xobject import is_xmlified
+from ._errors import ErrorTypes
 
 
 def write_file(file_path: str | Path, tree: _ElementTree):

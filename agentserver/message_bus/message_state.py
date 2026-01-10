@@ -1,6 +1,12 @@
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from lxml.etree import Element
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lxml.etree import _Element as Element
+else:
+    Element = Any  # Runtime: don't need the actual type
 
 """
 default_listener_steps = [
@@ -33,6 +39,7 @@ class MessageState:
 
     thread_id: str | None = None
     from_id: str | None = None
+    to_id: str | None = None  # Target listener name for routing
 
     target_listeners: list['Listener'] | None = None   # Forward reference
 

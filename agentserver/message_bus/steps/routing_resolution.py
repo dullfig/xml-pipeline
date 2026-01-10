@@ -1,50 +1,70 @@
 """
 routing_resolution.py — Resolve routing based on derived root tag.
 
-This is the final preparation step before dispatch.
-It computes the root tag from the deserialized payload and looks it up in the
-global routing table (root_tag → list[Listener]).
+This step computes the root tag from the deserialized payload and looks it up
+in a routing table (root_tag → list[Listener]).
 
-On success: state.target_listeners is set
-On failure: state.error is set → message falls to system pipeline for <huh>
+NOTE: The StreamPump has routing built-in via _route_step(). This standalone
+step is provided for custom pipeline configurations or testing.
+
+Usage:
+    routing_step = make_routing_step(routing_table)
+    state = await routing_step(state)
 
 Part of AgentServer v2.1 message pump.
 """
 
+from __future__ import annotations
+
+from typing import Dict, List, Callable, Awaitable, TYPE_CHECKING
+
 from agentserver.message_bus.message_state import MessageState
-from agentserver.message_bus.bus import MessageBus
+
+if TYPE_CHECKING:
+    from agentserver.message_bus.stream_pump import Listener
 
 
-async def routing_resolution_step(state: MessageState) -> MessageState:
+def make_routing_step(
+    routing_table: Dict[str, List["Listener"]]
+) -> Callable[[MessageState], Awaitable[MessageState]]:
     """
-    Resolve which listener(s) should handle this payload.
+    Factory: create a routing step with a specific routing table.
 
-    Root tag = f"{from_id.lower()}.{payload_class_name.lower()}"
-    (from_id is trustworthy — injected by pump)
-
-    Supports:
-      - Normal unique routing (one listener)
-      - Broadcast (multiple listeners if broadcast: true and same root tag)
-
-    If no match → error, falls to system pipeline.
+    The routing table maps root tags to lists of listeners:
+        {"agent.payload": [listener1, listener2], ...}
     """
-    if state.payload is None:
-        state.error = "routing_resolution_step: no deserialized payload (previous step failed)"
+
+    async def routing_resolution_step(state: MessageState) -> MessageState:
+        """
+        Resolve which listener(s) should handle this payload.
+
+        Root tag = f"{from_id.lower()}.{payload_class_name.lower()}"
+
+        Supports:
+          - Normal unique routing (one listener)
+          - Broadcast (multiple listeners if same root tag)
+
+        If no match → error, falls to system pipeline.
+        """
+        if state.payload is None:
+            state.error = "routing_resolution_step: no deserialized payload"
+            return state
+
+        if state.to_id is None:
+            state.error = "routing_resolution_step: missing to_id"
+            return state
+
+        payload_class_name = type(state.payload).__name__.lower()
+        root_tag = f"{state.to_id.lower()}.{payload_class_name}"
+
+        targets = routing_table.get(root_tag)
+
+        if not targets:
+            state.error = f"routing_resolution_step: unknown root tag '{root_tag}'"
+            return state
+
+        state.target_listeners = targets
         return state
 
-    if state.from_id is None:
-        state.error = "routing_resolution_step: missing from_id (provenance error)"
-        return state
-
-    payload_class_name = type(state.payload).__name__.lower()
-    root_tag = f"{state.from_id.lower()}.{payload_class_name}"
-
-    bus = MessageBus.get_instance()
-    targets = bus.routing_table.get(root_tag)
-
-    if not targets:
-        state.error = f"routing_resolution_step: unknown capability root tag '{root_tag}'"
-        return state
-
-    state.target_listeners = targets
-    return state
+    routing_resolution_step.__name__ = "routing_resolution_step"
+    return routing_resolution_step
