@@ -15,10 +15,16 @@ max_concurrent_per_agent: 5
 thread_scheduling: breadth-first
 
 listeners:
-  # The greeter listener responds to Greeting payloads
+  # The greeter receives Greeting, sends GreetingResponse to shouter
   - name: greeter
     payload_class: handlers.hello.Greeting
     handler: handlers.hello.handle_greeting
-    description: Responds with a greeting message
-    agent: false
-    broadcast: false
+    description: Receives greeting, forwards to shouter
+    agent: true
+
+  # The shouter receives GreetingResponse, sends ShoutedResponse back to user
+  - name: shouter
+    payload_class: handlers.hello.GreetingResponse
+    handler: handlers.hello.handle_shout
+    description: Shouts the greeting in ALL CAPS
+    agent: true

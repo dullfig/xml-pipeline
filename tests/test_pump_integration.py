@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, patch
 
 from agentserver.message_bus import StreamPump, bootstrap, MessageState
 from agentserver.message_bus.stream_pump import ConfigLoader, ListenerConfig, OrganismConfig, Listener
-from handlers.hello import Greeting, GreetingResponse, handle_greeting, ENVELOPE_NS
+from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout, ENVELOPE_NS
 
 
 def make_envelope(payload_xml: str, from_id: str, to_id: str, thread_id: str) -> bytes:
@@ -50,10 +50,17 @@ class TestPumpBootstrap:
         config = ConfigLoader.load('config/organism.yaml')
 
         assert config.name == "hello-world"
-        assert len(config.listeners) == 1
+        assert len(config.listeners) == 2
+
+        # Greeter listener
         assert config.listeners[0].name == "greeter"
         assert config.listeners[0].payload_class == Greeting
         assert config.listeners[0].handler == handle_greeting
+
+        # Shouter listener
+        assert config.listeners[1].name == "shouter"
+        assert config.listeners[1].payload_class == GreetingResponse
+        assert config.listeners[1].handler == handle_shout
 
     @pytest.mark.asyncio
     async def test_bootstrap_creates_pump(self):
@@ -62,7 +69,9 @@ class TestPumpBootstrap:
 
         assert pump.config.name == "hello-world"
         assert "greeter.greeting" in pump.routing_table
+        assert "shouter.greetingresponse" in pump.routing_table
         assert pump.listeners["greeter"].payload_class == Greeting
+        assert pump.listeners["shouter"].payload_class == GreetingResponse
 
     @pytest.mark.asyncio
     async def test_bootstrap_generates_xsd(self):
