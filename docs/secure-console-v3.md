@@ -353,14 +353,24 @@ async def handle_console_prompt(payload: ConsolePrompt, metadata: HandlerMetadat
 
 ### Detached Behavior
 
-When console is detached:
+When console is detached, prompt changes and message sending is disabled:
+
+```
+Attached:                          Detached:
+> @greeter hello  ← works          # @greeter hello  ← rejected
+> /status         ← works          # /status         ← works
+                                   # /attach
+                                   Password: ********
+                                   > _               ← re-attached
+```
 
 | Concern | Behavior |
 |---------|----------|
-| Messages to console | Queued in ring buffer (last 100) |
-| Organism operation | Continues normally |
-| Logging | All output logged to file |
-| Re-attach | `/attach` displays queued messages |
+| Prompt | Changes from `>` to `#` |
+| `/commands` | Still work (can check status, attach, quit) |
+| `@messages` | Rejected: "Console detached. Use /attach" |
+| Organism | Continues running normally |
+| Logging | Output logged to file while detached |
 
 ### Commands
 
