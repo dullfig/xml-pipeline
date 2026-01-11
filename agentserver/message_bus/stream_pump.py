@@ -32,6 +32,7 @@ from agentserver.message_bus.steps.thread_assignment import thread_assignment_st
 from agentserver.message_bus.message_state import MessageState, HandlerMetadata, HandlerResponse, SystemError, ROUTING_ERROR
 from agentserver.message_bus.thread_registry import get_registry
 from agentserver.message_bus.todo_registry import get_todo_registry
+from agentserver.memory import get_context_buffer
 
 
 # ============================================================================
@@ -348,6 +349,7 @@ class StreamPump:
                     # Ensure we have a valid thread chain
                     registry = get_registry()
                     todo_registry = get_todo_registry()
+                    context_buffer = get_context_buffer()
                     current_thread = state.thread_id or ""
 
                     # Check if thread exists in registry; if not, register it
@@ -376,6 +378,27 @@ class StreamPump:
                     if listener.is_agent and current_thread:
                         raised = todo_registry.get_raised_for(current_thread, listener.name)
                         todo_nudge = todo_registry.format_nudge(raised)
+
+                    # === CONTEXT BUFFER: Record incoming message ===
+                    # Append validated payload to thread's context buffer
+                    if current_thread and state.payload:
+                        try:
+                            context_buffer.append(
+                                thread_id=current_thread,
+                                payload=state.payload,
+                                from_id=state.from_id or "unknown",
+                                to_id=listener.name,
+                                own_name=listener.name if listener.is_agent else None,
+                                is_self_call=is_self_call,
+                                usage_instructions=listener.usage_instructions,
+                                todo_nudge=todo_nudge,
+                            )
+                        except MemoryError:
+                            # Thread exceeded max slots - log and continue
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                f"Thread {current_thread[:8]}... exceeded context buffer limit"
+                            )
 
                     metadata = HandlerMetadata(
                         thread_id=current_thread,
@@ -434,6 +457,22 @@ class StreamPump:
 
                             to_id = requested_to
                             thread_id = registry.extend_chain(current_thread, to_id)
+
+                        # === CONTEXT BUFFER: Record outgoing response ===
+                        # Append handler's response to the target thread's buffer
+                        # This happens BEFORE serialization - the buffer holds the clean payload
+                        try:
+                            context_buffer.append(
+                                thread_id=thread_id,
+                                payload=response.payload,
+                                from_id=listener.name,
+                                to_id=to_id,
+                            )
+                        except MemoryError:
+                            import logging
+                            logging.getLogger(__name__).warning(
+                                f"Thread {thread_id[:8]}... exceeded context buffer limit"
+                            )
 
                         response_bytes = self._wrap_in_envelope(
                             payload=response.payload,
