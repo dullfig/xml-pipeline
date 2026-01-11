@@ -85,50 +85,42 @@ STYLE = Style.from_dict({
 # ============================================================================
 
 class OutputBuffer:
-    """Manages scrolling output history."""
+    """Manages scrolling output history using a text Buffer."""
 
     def __init__(self, max_lines: int = 1000):
-        self.lines: List[tuple] = []  # (style_class, text)
         self.max_lines = max_lines
+        self._lines: List[str] = []
+        # Create a read-only buffer for display
+        self.buffer = Buffer(read_only=True, name="output")
 
     def append(self, text: str, style: str = "output"):
         """Add a line to output."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.lines.append((style, f"[{timestamp}] {text}"))
-        if len(self.lines) > self.max_lines:
-            self.lines = self.lines[-self.max_lines:]
+        self._lines.append(f"[{timestamp}] {text}")
+        self._update_buffer()
 
     def append_raw(self, text: str, style: str = "output"):
         """Add without timestamp."""
-        self.lines.append((style, text))
-        if len(self.lines) > self.max_lines:
-            self.lines = self.lines[-self.max_lines:]
+        self._lines.append(text)
+        self._update_buffer()
 
-    def get_formatted_text(self, scroll_offset: int = 0) -> FormattedText:
-        """Get formatted text for display.
+    def _update_buffer(self):
+        """Update the buffer content and scroll to bottom."""
+        # Trim if needed
+        if len(self._lines) > self.max_lines:
+            self._lines = self._lines[-self.max_lines:]
 
-        scroll_offset: 0 = show bottom, positive = scroll up N lines
-        """
-        result = []
-
-        if scroll_offset == 0:
-            # Show all lines (newest at bottom)
-            for style, text in self.lines:
-                result.append((f"class:{style}", text))
-                result.append(("", "\n"))
-        else:
-            # Show lines up to scroll_offset from end
-            end_idx = len(self.lines) - scroll_offset
-            if end_idx > 0:
-                for style, text in self.lines[:end_idx]:
-                    result.append((f"class:{style}", text))
-                    result.append(("", "\n"))
-
-        return FormattedText(result)
+        # Update buffer text
+        text = "\n".join(self._lines)
+        self.buffer.set_document(
+            Document(text=text, cursor_position=len(text)),
+            bypass_readonly=True
+        )
 
     def clear(self):
         """Clear output."""
-        self.lines.clear()
+        self._lines.clear()
+        self.buffer.set_document(Document(text=""), bypass_readonly=True)
 
 
 # ============================================================================
@@ -198,45 +190,29 @@ class TUIConsole:
         def handle_ctrl_l(event):
             """Handle Ctrl+L - clear output."""
             self.output.clear()
-            self.scroll_offset = 0
 
-        # Track scroll offset (0 = bottom, positive = lines from bottom)
-        self.scroll_offset = 0
+        @kb.add("tab")
+        def handle_tab(event):
+            """Switch focus between output and input."""
+            event.app.layout.focus_next()
 
-        @kb.add("pageup")
-        def handle_page_up(event):
-            """Scroll output up."""
-            max_offset = max(0, len(self.output.lines) - 5)
-            self.scroll_offset = min(self.scroll_offset + 10, max_offset)
+        @kb.add("s-tab")
+        def handle_shift_tab(event):
+            """Switch focus between output and input."""
+            event.app.layout.focus_previous()
 
-        @kb.add("pagedown")
-        def handle_page_down(event):
-            """Scroll output down."""
-            self.scroll_offset = max(0, self.scroll_offset - 10)
-
-        @kb.add("end")
-        def handle_end(event):
-            """Scroll to bottom."""
-            self.scroll_offset = 0
-
-        @kb.add("home")
-        def handle_home(event):
-            """Scroll to top."""
-            self.scroll_offset = max(0, len(self.output.lines) - 5)
-
-        # Output control - uses scroll_offset to show correct portion
-        def get_visible_output():
-            return self.output.get_formatted_text(self.scroll_offset)
-
-        output_control = FormattedTextControl(
-            text=get_visible_output,
-            focusable=False,
+        # Output uses BufferControl for native scrolling
+        output_control = BufferControl(
+            buffer=self.output.buffer,
+            focusable=True,  # Allow focus for scrolling
+            include_default_input_processors=False,
         )
 
-        # Output window - takes all available space
+        # Output window - takes all available space, scrolls with cursor
         self.output_window = Window(
             content=output_control,
             wrap_lines=True,
+            right_margins=[ScrollbarMargin(display_arrows=True)],
         )
 
         # Separator line with status (shows scroll hint if not at bottom)
@@ -447,8 +423,8 @@ class TUIConsole:
         self.print_raw("  Ctrl+C / Ctrl+D    Quit", "output.dim")
         self.print_raw("  Ctrl+L             Clear output", "output.dim")
         self.print_raw("  Up/Down            Command history", "output.dim")
-        self.print_raw("  Page Up/Down       Scroll output history", "output.dim")
-        self.print_raw("  Home/End           Jump to top/bottom", "output.dim")
+        self.print_raw("  Tab                Switch focus (input/output)", "output.dim")
+        self.print_raw("  Arrow keys         Scroll when output focused", "output.dim")
 
     async def _cmd_status(self, args: str):
         """Show status."""
