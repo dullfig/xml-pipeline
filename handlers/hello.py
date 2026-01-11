@@ -126,3 +126,15 @@ async def handle_shout(payload: GreetingResponse, metadata: HandlerMetadata) -> 
         payload=ShoutedResponse(message=payload.message.upper()),
         to=payload.original_sender,
     )
+
+
+async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetadata) -> None:
+    """
+    Print the final response to stdout.
+
+    This is a simple terminal handler for the SecureConsole flow.
+    """
+    # Print on fresh line with color formatting, then reprint prompt
+    print(f"\n\033[36m[response] {payload.message}\033[0m")
+    print("> ", end="", flush=True)  # Reprint prompt
+    return None

@@ -7,10 +7,12 @@ It establishes the root thread from which all other threads descend.
 The boot handler:
 1. Logs organism startup
 2. Initializes any system-level state
-3. Sends initial ConsolePrompt to start the console REPL
 
 All external messages that arrive without a known thread parent
 will be registered as children of the boot thread.
+
+Note: The SecureConsole (v3.0) handles the console directly, so the boot
+handler no longer sends to a console listener.
 """
 
 from dataclasses import dataclass
@@ -35,25 +37,11 @@ class Boot:
     listener_count: int = 0
 
 
-@xmlify
-@dataclass
-class ConsolePrompt:
-    """
-    Prompt message to the console.
-
-    Duplicated here to avoid circular import with handlers.console.
-    The pump will route based on payload class name.
-    """
-    output: str = ""
-    source: str = ""
-    show_banner: bool = False
-
-
-async def handle_boot(payload: Boot, metadata: HandlerMetadata) -> HandlerResponse:
+async def handle_boot(payload: Boot, metadata: HandlerMetadata) -> None:
     """
     Handle the system boot message.
 
-    Logs the boot event and sends initial ConsolePrompt to start the REPL.
+    Logs the boot event. The SecureConsole handles user interaction directly.
     """
     logger.info(
         f"Organism '{payload.organism_name}' booted at {payload.timestamp} "
@@ -66,12 +54,5 @@ async def handle_boot(payload: Boot, metadata: HandlerMetadata) -> HandlerRespon
     # - Load cached schemas
     # - Pre-populate routing caches
 
-    # Send initial prompt to console to start the REPL
-    return HandlerResponse(
-        payload=ConsolePrompt(
-            output=f"Organism '{payload.organism_name}' ready.\n{payload.listener_count} listeners registered.",
-            source="system",
-            show_banner=True,
-        ),
-        to="console",
-    )
+    # No response needed - SecureConsole handles user interaction
+    return None

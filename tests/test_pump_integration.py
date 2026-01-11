@@ -52,13 +52,13 @@ class TestPumpBootstrap:
         config = ConfigLoader.load('config/organism.yaml')
 
         assert config.name == "hello-world"
-        assert len(config.listeners) == 5  # console-router, response-handler, console, greeter, shouter
+        assert len(config.listeners) == 3  # greeter, shouter, response-handler
 
         # Find greeter and shouter by name
         listener_names = [lc.name for lc in config.listeners]
         assert "greeter" in listener_names
         assert "shouter" in listener_names
-        assert "console-router" in listener_names
+        assert "response-handler" in listener_names
 
     @pytest.mark.asyncio
     async def test_bootstrap_creates_pump(self):
@@ -66,10 +66,10 @@ class TestPumpBootstrap:
         pump = await bootstrap('config/organism.yaml')
 
         assert pump.config.name == "hello-world"
-        assert len(pump.routing_table) == 8  # 5 user listeners + 3 system (boot, todo, todo-complete)
+        assert len(pump.routing_table) == 6  # 3 user listeners + 3 system (boot, todo, todo-complete)
         assert "greeter.greeting" in pump.routing_table
         assert "shouter.greetingresponse" in pump.routing_table
-        assert "console-router.consoleinput" in pump.routing_table
+        assert "response-handler.shoutedresponse" in pump.routing_table
         assert "system.boot.boot" in pump.routing_table  # Boot listener
 
     @pytest.mark.asyncio

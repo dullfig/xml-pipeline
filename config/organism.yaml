@@ -1,17 +1,13 @@
-# organism.yaml — Multi-agent organism with console interface
+# organism.yaml — Multi-agent organism with secure console (v3.0)
 #
-# Message flow:
-#   boot
-#     -> system.boot (logs, sends ConsolePrompt)
-#     -> console (displays, awaits input, returns ConsoleInput)
-#     -> console-router (ConsoleInput -> Greeting)
+# The SecureConsole is the sole privileged interface.
+# It handles authentication and commands, then injects messages into the flow.
+#
+# Message flow for @greeter hello:
+#   SecureConsole.inject(Greeting)
 #     -> greeter (Greeting -> GreetingResponse)
 #     -> shouter (GreetingResponse -> ShoutedResponse)
-#     -> response-handler (ShoutedResponse -> ConsolePrompt)
-#     -> console (displays, awaits input, ...)
-#
-# The console is a regular handler in the message flow.
-# Returns None on EOF/quit to disconnect.
+#     -> (response captured by SecureConsole via context buffer)
 
 organism:
   name: hello-world
@@ -35,33 +31,11 @@ llm:
       rate_limit_tpm: 100000
 
 listeners:
-  # Console: receives ConsolePrompt, displays output, awaits input
-  # Returns ConsoleInput to console-router, or None to disconnect
-  - name: console
-    payload_class: handlers.console.ConsolePrompt
-    handler: handlers.console.handle_console_prompt
-    description: Interactive console - displays output, awaits input
-    agent: false
-
-  # Console router: receives ConsoleInput, translates to target payload
-  - name: console-router
-    payload_class: handlers.console.ConsoleInput
-    handler: handlers.console.handle_console_input
-    description: Routes console input to appropriate listeners
-    agent: false
-
-  # Response handler: receives ShoutedResponse, creates ConsolePrompt
-  - name: response-handler
-    payload_class: handlers.console.ShoutedResponse
-    handler: handlers.console.handle_shouted_response
-    description: Forwards responses back to console
-    agent: false
-
   # Greeter: receives Greeting, sends GreetingResponse to shouter
   - name: greeter
     payload_class: handlers.hello.Greeting
     handler: handlers.hello.handle_greeting
-    description: Receives greeting, forwards to shouter
+    description: Greeting agent - forwards to shouter
     agent: true
     peers: [shouter]
 
@@ -70,4 +44,11 @@ listeners:
     payload_class: handlers.hello.GreetingResponse
     handler: handlers.hello.handle_shout
     description: Shouts the greeting in ALL CAPS
+    agent: false
+
+  # Response handler: prints responses to stdout
+  - name: response-handler
+    payload_class: handlers.hello.ShoutedResponse
+    handler: handlers.hello.handle_response_print
+    description: Prints responses to console
     agent: false

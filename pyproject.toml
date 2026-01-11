@@ -29,6 +29,8 @@ dependencies = [
     "aiostream>=0.5",
     "pyhumps",
     "termcolor",
+    "argon2-cffi",
+    "prompt_toolkit>=3.0",
 ]
 
 [project.optional-dependencies]
