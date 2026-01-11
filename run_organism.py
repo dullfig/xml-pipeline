@@ -23,20 +23,11 @@ import sys
 from pathlib import Path
 
 from agentserver.message_bus import bootstrap
-
-
-# Global console reference for response handler
-_console = None
-
-
-def get_console():
-    """Get the current console instance."""
-    return _console
+from agentserver.console.console_registry import set_console
 
 
 async def run_organism(config_path: str = "config/organism.yaml", use_simple: bool = False):
     """Boot organism with TUI console."""
-    global _console
 
     # Bootstrap the pump
     pump = await bootstrap(config_path)
@@ -48,7 +39,7 @@ async def run_organism(config_path: str = "config/organism.yaml", use_simple: bo
         if not await console.authenticate():
             print("Authentication failed.")
             return
-        _console = None
+        set_console(None)
 
         pump_task = asyncio.create_task(pump.run())
         try:
@@ -65,7 +56,7 @@ async def run_organism(config_path: str = "config/organism.yaml", use_simple: bo
         # Use new TUI console
         from agentserver.console.tui_console import TUIConsole
         console = TUIConsole(pump)
-        _console = console
+        set_console(console)  # Register for handlers to find
 
         # Start pump in background
         pump_task = asyncio.create_task(pump.run())

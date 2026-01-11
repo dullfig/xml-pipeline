@@ -126,18 +126,12 @@ async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetad
 
     Routes output to the TUI console if available, otherwise prints to stdout.
     """
-    console = None
-    try:
-        from run_organism import get_console
-        console = get_console()
-    except ImportError as e:
-        print(f"[DEBUG] ImportError: {e}")
+    from agentserver.console.console_registry import get_console
 
-    if console is not None:
-        if hasattr(console, 'on_response'):
-            console.on_response("shouter", payload)
-        else:
-            print(f"[DEBUG] console has no on_response: {type(console)}")
+    console = get_console()
+
+    if console is not None and hasattr(console, 'on_response'):
+        console.on_response("shouter", payload)
     else:
-        print(f"[DEBUG] console is None, printing to stdout")
+        # Fallback for simple mode or no console
         print(f"\033[36m[response] {payload.message}\033[0m")
