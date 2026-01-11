@@ -122,11 +122,19 @@ async def handle_shout(payload: GreetingResponse, metadata: HandlerMetadata) -> 
 
 async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetadata) -> None:
     """
-    Print the final response to stdout.
+    Print the final response to the console.
 
-    This is a simple terminal handler for the SecureConsole flow.
+    Routes output to the TUI console if available, otherwise prints to stdout.
     """
-    # Print on fresh line with color formatting, then reprint prompt
+    try:
+        from run_organism import get_console
+        console = get_console()
+        if console and hasattr(console, 'on_response'):
+            console.on_response("response", payload)
+            return None
+    except ImportError:
+        pass
+
+    # Fallback: print to stdout
     print(f"\n\033[36m[response] {payload.message}\033[0m")
-    print("> ", end="", flush=True)  # Reprint prompt
     return None
