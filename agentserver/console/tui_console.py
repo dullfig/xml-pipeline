@@ -132,8 +132,14 @@ class OutputBuffer:
             )
 
     def is_at_bottom(self) -> bool:
-        """Check if output is scrolled to bottom."""
-        return self.buffer.cursor_position >= len(self.buffer.text)
+        """Check if output is scrolled to bottom (or near bottom)."""
+        doc = self.buffer.document
+        # Consider "at bottom" if on last 3 lines
+        return doc.cursor_position_row >= doc.line_count - 3
+
+    def scroll_to_bottom(self):
+        """Scroll to the very bottom."""
+        self.buffer.cursor_position = len(self.buffer.text)
 
     def clear(self):
         """Clear output."""
@@ -232,12 +238,16 @@ class TUIConsole:
 
         @kb.add("pagedown")
         def handle_pagedown(event):
-            """Scroll output down a page."""
+            """Scroll output down a page (snap to bottom if near end)."""
             buf = self.output.buffer
             doc = buf.document
-            new_row = min(doc.line_count - 1, doc.cursor_position_row + 20)
-            new_pos = doc.translate_row_col_to_index(new_row, 0)
-            buf.cursor_position = new_pos
+            new_row = doc.cursor_position_row + 20
+            # Snap to bottom if within 3 lines of end
+            if new_row >= doc.line_count - 3:
+                self.output.scroll_to_bottom()
+            else:
+                new_pos = doc.translate_row_col_to_index(new_row, 0)
+                buf.cursor_position = new_pos
 
         @kb.add("c-home")
         def handle_ctrl_home(event):
@@ -247,7 +257,7 @@ class TUIConsole:
         @kb.add("c-end")
         def handle_ctrl_end(event):
             """Scroll to bottom of output."""
-            self.output.buffer.cursor_position = len(self.output.buffer.text)
+            self.output.scroll_to_bottom()
 
         # Output uses BufferControl for scrolling (not focusable - input keeps focus)
         output_control = BufferControl(
