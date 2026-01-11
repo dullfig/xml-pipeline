@@ -62,8 +62,12 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
     2. Send GreetingResponse to shouter
     3. When ShoutedResponse appears, eyebrow is raised
     4. On next invocation, greeter sees nudge and can close the todo
+
+    NOTE: This handler uses platform.complete() for LLM calls.
+    The system prompt is managed by the platform (from organism.yaml).
+    The handler cannot see or modify the prompt.
     """
-    from agentserver.llm import complete
+    from agentserver.platform import complete
     from agentserver.message_bus.todo_registry import get_todo_registry
 
     # Check for any raised todos and close them
@@ -73,10 +77,8 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
         raised = todo_registry.get_raised_for(metadata.thread_id, metadata.own_name or "greeter")
         for watcher in raised:
             todo_registry.close(watcher.id)
-            # In a real scenario, we might log or react to the completed todo
 
     # Register a todo watcher - we want to know when shouter responds
-    # This demonstrates the "await confirmation" pattern
     todo_registry.register(
         thread_id=metadata.thread_id,
         issuer=metadata.own_name or "greeter",
@@ -85,30 +87,20 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
         description=f"waiting for shouter to process greeting for {payload.name}",
     )
 
-    # Build system prompt with peer awareness
-    system_prompt = "You are a friendly greeter. Respond with ONLY a single short enthusiastic greeting sentence. No XML, no markup, just the greeting text."
-    if metadata.usage_instructions:
-        system_prompt = metadata.usage_instructions + "\n\n" + system_prompt
-
-    # Include any todo nudges in the prompt (for LLM awareness)
-    if metadata.todo_nudge:
-        system_prompt = system_prompt + "\n\n" + metadata.todo_nudge
-
-    # Use LLM to generate a creative greeting
+    # Use platform.complete() for LLM call
+    # The platform assembles: system prompt (from registry) + peer schemas + history + user message
+    # The handler only provides the user message - no prompt building!
     llm_response = await complete(
-        model="grok-3-mini-beta",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Greet {payload.name} enthusiastically."},
-        ],
-        agent_id=metadata.own_name,
+        agent_name=metadata.own_name or "greeter",
+        thread_id=metadata.thread_id,
+        user_message=f"Greet {payload.name} enthusiastically. Respond with ONLY a short greeting sentence.",
         temperature=0.9,
     )
 
     # Return clean dataclass + target - pump handles envelope
     return HandlerResponse(
         payload=GreetingResponse(
-            message=llm_response.content,
+            message=llm_response,
             original_sender="response-handler",
         ),
         to="shouter",

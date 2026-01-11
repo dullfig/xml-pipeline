@@ -38,6 +38,10 @@ listeners:
     description: Greeting agent - forwards to shouter
     agent: true
     peers: [shouter]
+    prompt: |
+      You are a friendly greeter agent.
+      When someone sends you a greeting, respond enthusiastically.
+      Keep your responses short (1-2 sentences).
 
   # Shouter: receives GreetingResponse, sends ShoutedResponse back
   - name: shouter

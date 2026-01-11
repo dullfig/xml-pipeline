@@ -48,6 +48,7 @@ class ListenerConfig:
     is_agent: bool = False
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
+    prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
 
@@ -760,6 +761,7 @@ class ConfigLoader:
             is_agent=raw.get("agent", False),
             peers=raw.get("peers", []),
             broadcast=raw.get("broadcast", False),
+            prompt=raw.get("prompt", ""),
         )
 
     @classmethod
@@ -784,6 +786,7 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
         TodoUntil, TodoComplete,
         handle_todo_until, handle_todo_complete,
     )
+    from agentserver.platform import get_prompt_registry
 
     # Load .env file if present
     load_dotenv()
@@ -832,6 +835,27 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
 
     # Register all user-defined listeners
     pump.register_all()
+
+    # Load prompts into PromptRegistry (platform-managed, immutable)
+    prompt_registry = get_prompt_registry()
+    prompt_count = 0
+    for listener in pump.listeners.values():
+        if listener.is_agent:
+            # Get prompt from config (may be empty)
+            lc = next((l for l in config.listeners if l.name == listener.name), None)
+            system_prompt = lc.prompt if lc else ""
+
+            # Register prompt with peer schemas (usage_instructions)
+            prompt_registry.register(
+                agent_name=listener.name,
+                system_prompt=system_prompt,
+                peer_schemas=listener.usage_instructions,
+            )
+            prompt_count += 1
+
+    # Freeze registry - no more registrations allowed
+    prompt_registry.freeze()
+    print(f"Prompts: {prompt_count} agents registered, registry frozen")
 
     # Configure LLM router if llm section present
     if config.llm_config:
