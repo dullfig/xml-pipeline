@@ -191,6 +191,17 @@ class TUIConsole:
             """Handle Ctrl+L - clear output."""
             self.output.clear()
 
+        # Up/Down for command history
+        @kb.add("up")
+        def handle_up(event):
+            """Previous command in history."""
+            self.input_buffer.auto_up()
+
+        @kb.add("down")
+        def handle_down(event):
+            """Next command in history."""
+            self.input_buffer.auto_down()
+
         # Page Up/Down scroll output (no focus change needed)
         @kb.add("pageup")
         def handle_pageup(event):
@@ -234,7 +245,10 @@ class TUIConsole:
             right_margins=[ScrollbarMargin(display_arrows=True)],
         )
 
-        # Separator line with status (shows scroll hint if not at bottom)
+        # Blank line spacer above separator
+        spacer = Window(height=1)
+
+        # Separator line with status
         def get_separator():
             name = self.pump.config.name
             width = 60
@@ -271,6 +285,7 @@ class TUIConsole:
         # Main layout
         root = HSplit([
             self.output_window,  # Scrollable output history
+            spacer,              # Blank line above separator
             separator,
             input_row,
         ])
