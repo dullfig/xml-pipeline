@@ -191,48 +191,9 @@ class TUIConsole:
             """Handle Ctrl+L - clear output."""
             self.output.clear()
 
-        @kb.add("tab")
-        def handle_tab(event):
-            """Switch focus between output and input."""
-            event.app.layout.focus_next()
-
-        @kb.add("s-tab")
-        def handle_shift_tab(event):
-            """Switch focus between output and input."""
-            event.app.layout.focus_previous()
-
-        # Helper to check if output is focused
-        def output_focused():
-            try:
-                return self.app and self.app.layout.has_focus(self.output.buffer)
-            except Exception:
-                return False
-
-        from prompt_toolkit.filters import Condition
-        output_focus_filter = Condition(output_focused)
-
-        # Arrow keys for scrolling output (move cursor to scroll view)
-        @kb.add("up", filter=output_focus_filter)
-        def handle_output_up(event):
-            """Scroll output up."""
-            buf = self.output.buffer
-            # Move cursor up one line
-            doc = buf.document
-            if doc.cursor_position_row > 0:
-                new_pos = doc.translate_row_col_to_index(doc.cursor_position_row - 1, 0)
-                buf.cursor_position = new_pos
-
-        @kb.add("down", filter=output_focus_filter)
-        def handle_output_down(event):
-            """Scroll output down."""
-            buf = self.output.buffer
-            doc = buf.document
-            if doc.cursor_position_row < doc.line_count - 1:
-                new_pos = doc.translate_row_col_to_index(doc.cursor_position_row + 1, 0)
-                buf.cursor_position = new_pos
-
-        @kb.add("pageup", filter=output_focus_filter)
-        def handle_output_pageup(event):
+        # Page Up/Down scroll output (no focus change needed)
+        @kb.add("pageup")
+        def handle_pageup(event):
             """Scroll output up a page."""
             buf = self.output.buffer
             doc = buf.document
@@ -240,8 +201,8 @@ class TUIConsole:
             new_pos = doc.translate_row_col_to_index(new_row, 0)
             buf.cursor_position = new_pos
 
-        @kb.add("pagedown", filter=output_focus_filter)
-        def handle_output_pagedown(event):
+        @kb.add("pagedown")
+        def handle_pagedown(event):
             """Scroll output down a page."""
             buf = self.output.buffer
             doc = buf.document
@@ -249,20 +210,20 @@ class TUIConsole:
             new_pos = doc.translate_row_col_to_index(new_row, 0)
             buf.cursor_position = new_pos
 
-        @kb.add("home", filter=output_focus_filter)
-        def handle_output_home(event):
+        @kb.add("c-home")
+        def handle_ctrl_home(event):
             """Scroll to top of output."""
             self.output.buffer.cursor_position = 0
 
-        @kb.add("end", filter=output_focus_filter)
-        def handle_output_end(event):
+        @kb.add("c-end")
+        def handle_ctrl_end(event):
             """Scroll to bottom of output."""
             self.output.buffer.cursor_position = len(self.output.buffer.text)
 
-        # Output uses BufferControl for native scrolling
+        # Output uses BufferControl for scrolling (not focusable - input keeps focus)
         output_control = BufferControl(
             buffer=self.output.buffer,
-            focusable=True,  # Allow focus for scrolling
+            focusable=False,  # Keep focus on input, use Page Up/Down to scroll
             include_default_input_processors=False,
         )
 
@@ -480,10 +441,9 @@ class TUIConsole:
         self.print_raw("Shortcuts:", "output.system")
         self.print_raw("  Ctrl+C / Ctrl+D    Quit", "output.dim")
         self.print_raw("  Ctrl+L             Clear output", "output.dim")
-        self.print_raw("  Up/Down            Command history (in input)", "output.dim")
-        self.print_raw("  Tab                Switch focus (input/output)", "output.dim")
-        self.print_raw("  Up/Down/PgUp/PgDn  Scroll (when output focused)", "output.dim")
-        self.print_raw("  Home/End           Jump to top/bottom of output", "output.dim")
+        self.print_raw("  Up/Down            Command history", "output.dim")
+        self.print_raw("  Page Up/Down       Scroll output", "output.dim")
+        self.print_raw("  Ctrl+Home/End      Jump to top/bottom of output", "output.dim")
 
     async def _cmd_status(self, args: str):
         """Show status."""
