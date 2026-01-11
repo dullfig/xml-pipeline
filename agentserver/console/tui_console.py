@@ -108,7 +108,8 @@ class OutputBuffer:
         """Get formatted text for display."""
         result = []
         for style, text in self.lines:
-            result.append((f"class:{style}", text + "\n"))
+            result.append((f"class:{style}", text))
+            result.append(("", "\n"))  # Newline as separate unstyled element
         return FormattedText(result)
 
     def clear(self):
