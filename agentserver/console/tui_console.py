@@ -105,17 +105,35 @@ class OutputBuffer:
         self._update_buffer()
 
     def _update_buffer(self):
-        """Update the buffer content and scroll to bottom."""
+        """Update the buffer content, preserve scroll position if user scrolled up."""
         # Trim if needed
         if len(self._lines) > self.max_lines:
             self._lines = self._lines[-self.max_lines:]
 
+        # Check if cursor is at end (user hasn't scrolled up)
+        old_text = self.buffer.text
+        was_at_end = self.buffer.cursor_position >= len(old_text)
+
         # Update buffer text
         text = "\n".join(self._lines)
-        self.buffer.set_document(
-            Document(text=text, cursor_position=len(text)),
-            bypass_readonly=True
-        )
+
+        if was_at_end:
+            # Stay at bottom - auto-scroll
+            self.buffer.set_document(
+                Document(text=text, cursor_position=len(text)),
+                bypass_readonly=True
+            )
+        else:
+            # Preserve scroll position - silent append
+            old_pos = self.buffer.cursor_position
+            self.buffer.set_document(
+                Document(text=text, cursor_position=old_pos),
+                bypass_readonly=True
+            )
+
+    def is_at_bottom(self) -> bool:
+        """Check if output is scrolled to bottom."""
+        return self.buffer.cursor_position >= len(self.buffer.text)
 
     def clear(self):
         """Clear output."""
@@ -245,8 +263,14 @@ class TUIConsole:
             right_margins=[ScrollbarMargin(display_arrows=True)],
         )
 
-        # Blank line spacer above separator
-        spacer = Window(height=1)
+        # Dynamic spacer - only show when at bottom of output
+        def get_spacer_height():
+            if self.output.is_at_bottom():
+                return 1
+            return 0
+
+        from prompt_toolkit.layout.dimension import Dimension
+        spacer = Window(height=lambda: Dimension.exact(get_spacer_height()))
 
         # Separator line with status
         def get_separator():
