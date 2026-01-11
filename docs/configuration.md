@@ -78,6 +78,27 @@ gateways:
     remote_url: "wss://trusted-search-node.example.org"
     trusted_identity: "pubkeys/search_node.ed25519.pub"
     description: "Federated web search gateway group."
+
+llm:
+  strategy: failover                      # failover | round-robin | least-loaded
+  retries: 3                              # Max retry attempts per request
+  retry_base_delay: 1.0                   # Base delay for exponential backoff
+  retry_max_delay: 60.0                   # Maximum delay between retries
+
+  backends:
+    - provider: xai
+      api_key_env: XAI_API_KEY            # Read from environment
+      priority: 1                         # Lower = preferred for failover
+      rate_limit_tpm: 100000              # Tokens per minute
+      max_concurrent: 20                  # Max concurrent requests
+
+    - provider: anthropic
+      api_key_env: ANTHROPIC_API_KEY
+      priority: 2
+
+    - provider: ollama
+      base_url: http://localhost:11434
+      supported_models: [llama3, mistral]
 ```
 
 ### Sections Explained
@@ -116,6 +137,44 @@ All bounded capabilities (tools and agents).
 Federation peers (trusted remote organisms).
 - Declared separately for clarity.
 - Referenced in agent `peers:` lists by their registered `name`.
+
+#### `llm`
+LLM router configuration for agents. See `llm-router-v2.1.md` for complete specification.
+- `strategy`: Backend selection strategy.
+  - `failover` (default): Try backends in priority order, fail over on error.
+  - `round-robin`: Distribute requests evenly across backends.
+  - `least-loaded`: Route to backend with lowest current load.
+- `retries`: Max retry attempts per request.
+- `backends`: List of provider configurations.
+  - `provider`: Provider type (`xai`, `anthropic`, `openai`, `ollama`).
+  - `api_key_env`: Environment variable name containing the API key.
+  - `priority`: Lower = preferred (for failover strategy).
+  - `rate_limit_tpm`: Tokens per minute limit.
+  - `max_concurrent`: Max concurrent requests to this backend.
+  - `base_url`: Override default API endpoint (required for Ollama).
+  - `supported_models`: Model names this backend handles (Ollama only).
+
+### Environment Variables (.env)
+
+API keys and secrets should **never** be stored in YAML. Use environment variables instead.
+
+The bootstrap process automatically loads `.env` from the project root via `python-dotenv`:
+
+```env
+# .env (add to .gitignore!)
+XAI_API_KEY=xai-abc123...
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+```
+
+Reference in `organism.yaml` via `api_key_env`:
+
+```yaml
+llm:
+  backends:
+    - provider: xai
+      api_key_env: XAI_API_KEY    # Reads from environment
+```
 
 ### Key Invariants (v2.1)
 - Root tag = `{lowercase_name}.{lowercase_dataclass_name}` — fully derived, never written manually.

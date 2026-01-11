@@ -10,6 +10,9 @@ venv/
 ENV/
 
 # Secrets & config
+.env
+.env.local
+.env.*.local
 agentserver/config/organism_identity/private.pem
 agentserver/config/*.signed.xml
 

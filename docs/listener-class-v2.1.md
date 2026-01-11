@@ -1,5 +1,5 @@
-**listener-class-v2.1.md**  
-**January 07, 2026**  
+**listener-class-v2.1.md**
+**January 10, 2026** (Updated)
 **AgentServer v2.1 — The Listener Class & Registration**
 
 This is the canonical documentation for defining and registering capabilities in AgentServer v2.1.  
@@ -74,7 +74,7 @@ Optional flags:
 ```python
 from xmlable import xmlify
 from dataclasses import dataclass
-from xml_pipeline import Listener, HandlerMetadata
+from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass
@@ -83,12 +83,20 @@ class AddPayload:
     a: int = 0          # Field docstrings become parameter descriptions in prompts
     b: int = 0
 
+@xmlify
+@dataclass
+class ResultPayload:
+    """Calculation result."""
+    value: int = 0
+
 async def add_handler(
     payload: AddPayload,
     metadata: HandlerMetadata
-) -> bytes:
+) -> HandlerResponse:
     result = payload.a + payload.b
-    return f"<result>{result}</result>".encode("utf-8")
+    return HandlerResponse.respond(
+        payload=ResultPayload(value=result)
+    )
 ```
 
 ### Handler Signature and Metadata (Locked)
@@ -99,69 +107,53 @@ Typical uses:
 - Agents → reason about provenance using `from_id`, optionally refer to themselves via `own_name`
 
 ### Handler Return Requirements
-The handler **must** return a `bytes` object containing one or more payload root elements.
 
-Returning `None` or a non-`bytes` value is a programming error.
+Handlers return `HandlerResponse` or `None`:
 
-The message pump protects the organism by injecting a diagnostic payload if invalid bytes are returned:
+| Return | Effect |
+|--------|--------|
+| `HandlerResponse(payload, to)` | Send payload to named target |
+| `HandlerResponse.respond(payload)` | Return to caller (prunes call chain) |
+| `None` | Terminate chain, no message emitted |
 
-```python
-if response_bytes is None or not isinstance(response_bytes, bytes):
-    response_bytes = b"<huh>Handler failed to return valid bytes — likely missing return statement or wrong type</huh>"
-```
-
-This ensures:
-- The thread never hangs due to a forgotten return
-- The error is immediately visible in logs and thread history
-- LLM agents can observe and self-correct
+The pump handles all envelope wrapping. Handlers never construct XML envelopes.
 
 **Correct examples**
 ```python
-async def good(... ) -> bytes:
-    return b"<result>42</result>"
+async def forward_handler(payload, metadata) -> HandlerResponse:
+    return HandlerResponse(
+        payload=ProcessedPayload(data="..."),
+        to="next_listener",
+    )
 
-async def also_good(... ) -> bytes:
-    # fast synchronous-style computation
-    return b"<empty/>"
+async def respond_handler(payload, metadata) -> HandlerResponse:
+    result = compute(payload)
+    return HandlerResponse.respond(
+        payload=ResultPayload(value=result)
+    )
+
+async def terminal_handler(payload, metadata) -> None:
+    print(payload.message)
+    return None  # Chain ends here
 ```
 
-**Dangerous (triggers <huh> injection)**
-```python
-async def bad(... ):
-    computation()
-    # forgot return → implicit None
-```
+### Envelope Injection
 
-Always explicitly return `bytes`.
+Handlers return typed `HandlerResponse` objects. The pump performs all enveloping:
 
-### Multi-Payload Emission & Envelope Injection
-Handlers return **raw XML fragments only**. The pump performs all enveloping:
+1. Serialize payload dataclass to XML
+2. Build envelope with correct metadata:
+   - `<from>` = registered name of the executing listener (ALWAYS pump-injected)
+   - `<to>` = validated target from HandlerResponse
+   - `<thread>` = managed by thread registry (extended or pruned based on response type)
+3. Re-inject into pipeline for validation and routing
 
-1. Wrap response in `<dummy>` (tolerant of dirty output)
-2. Extract all root elements found inside
-3. For each extracted payload:
-   - Inherit current `<thread>`
-   - Inject `<from>` = registered name of the executing listener
-   - Build full `<message>` envelope
-   - Re-inject into the pipeline(s) matching the payload’s derived root tag
+**Security enforcement:**
+- `<from>` is ALWAYS set by the pump (handlers cannot forge identity)
+- `<to>` is validated against `peers` list for agents
+- `<thread>` is managed by the thread registry (handlers cannot escape context)
 
-Example emission enabling parallel tool calls + self-continuation:
-
-```python
-async def researcher_step(... ) -> bytes:
-    return b"""
-    <thought>Need weather and a calculation...</thought>
-    <web_search.searchpayload>
-      <query>current weather Los Angeles</query>
-    </web_search.searchpayload>
-    <calculator.add.addpayload>
-      <a>7</a>
-      <b>35</b>
-    </calculator.add.addpayload>
-    """
-```
-
-The three payloads are automatically enveloped with correct provenance and routed.
+See `handler-contract-v2.1.md` for complete security model.
 
 ### Registration Lifecycle
 At startup or privileged OOB hot-reload:
@@ -186,12 +178,14 @@ Any failure (duplicate root, missing description, import error) → clear error 
 ### Summary of Key Invariants
 - Root tag fully derived, never manually specified
 - Global uniqueness guaranteed by registered-name prefix
-- Handlers remain pure except for small trustworthy metadata
+- Handlers return typed `HandlerResponse` or `None` (never raw bytes or envelopes)
+- Handlers receive trustworthy metadata including peer `usage_instructions` for LLMs
 - All envelope construction and provenance injection performed exclusively by the pump
+- `<from>` always pump-injected (handlers cannot forge identity)
+- `<to>` validated against `peers` list for agents (cannot route to undeclared targets)
+- `<thread>` managed by thread registry (handlers cannot escape context)
 - Zero manual XSDs, examples, or prompt fragments required
 
-This specification is now locked for AgentServer v2.1. All code, examples, and future documentation must align with this file.
+---
 
---- 
-
-Ready for the next piece (message pump implementation notes, OOB channel, stateful listener examples, etc.) whenever you are.
+**v2.1 Specification** — Updated January 10, 2026

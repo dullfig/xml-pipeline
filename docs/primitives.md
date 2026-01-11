@@ -1,40 +1,143 @@
-# AgentServer v2.1 — System Primitives (Magic Tags)
+# AgentServer v2.1 — System Primitives
+**Updated: January 10, 2026**
 
-These payload root elements receive special routing and/or side effects in the message pump.  
-They reside in the reserved namespace `https://xml-pipeline.org/ns/core/v1`.
+This document specifies system-level message types and handler return semantics.
 
-## `<huh>`
-### `<huh>`
-- Emitted exclusively by the system
-- Routes back to the listener that triggered the error
-- Payload structure:
-  ```xml
-  <huh>
-    <error>Brief canned error message (e.g., "Invalid payload structure")</error>
-    <original-attempt>Base64-encoded raw bytes of the failed attempt (truncated if large)</original-attempt>
-  </huh>
-  ```
-- Purpose: Safe, LLM-friendly diagnostic feedback
-- Security note: Error messages are abstract and canned — no raw validator output is exposed to agents
-- Security note:
-  - Certain classes of errors (payload schema violations, unknown root tags, etc.) are intentionally reported with identical abstract messages.
-  - This prevents topology probing: an agent or external caller cannot distinguish between "wrong schema for existing capability" and "capability does not exist".
-  - Authorized introspection is available only via controlled meta queries.
+## Handler Return Semantics
 
-## `<todo-until>`
-- May be emitted by any listener
-- Routes to self (uses the emitting listener's unique root tag mechanism)
-- No side effects
-- Purpose: Optional visible scaffolding for structured reasoning and iteration planning
+Handlers control message flow through their return value, not through magic XML tags.
 
-## `<return>`
-- May be emitted by any listener
-- Routes to the immediate parent listener in the private thread hierarchy
-- Side effect: The Current subthread below the current listener is pruned after successful delivery of message.<br>the current thread tail is the current listener.
-- Purpose: Explicit return-to-caller semantics with automatic cleanup
+### Forward to Target
 
-## `<halt>`
-- May be emitted by any listener
-- Routes to the immediate parent listener in the private thread hierarchy
-- Side effect: The Entire thread is pruned up to and including the current listener.<br>the current thread tail is the parent listener.
-- Purpose: Explicit termination of the current thread and all its subthreads
+```python
+return HandlerResponse(
+    payload=MyPayload(...),
+    to="target_listener",
+)
+```
+- Pump validates target against `peers` list (for agents)
+- Extends thread chain: `a.b` → `a.b.target`
+- Target receives the payload with updated thread
+
+### Respond to Caller
+
+```python
+return HandlerResponse.respond(
+    payload=ResultPayload(...)
+)
+```
+- Pump looks up call chain from thread registry
+- Prunes last segment (the responder)
+- Routes to new tail (the caller)
+- **Sub-threads are terminated** (calculator memory, scratch space, etc.)
+
+### Terminate Chain
+
+```python
+return None
+```
+- No message emitted
+- Chain ends here
+- Thread can be cleaned up
+
+## System Messages
+
+These payload elements are emitted by the system (pump) only. Agents cannot emit them.
+
+### `<huh>` — Validation Error
+
+Emitted when message processing fails (XSD validation, unknown root tag, etc.).
+
+```xml
+<huh xmlns="https://xml-pipeline.org/ns/core/v1">
+  <error>Invalid payload structure</error>
+  <original-attempt>SGVsbG8gV29ybGQ=</original-attempt>
+</huh>
+```
+
+| Field | Description |
+|-------|-------------|
+| `error` | Brief, canned error message (never raw validator output) |
+| `original-attempt` | Base64-encoded raw bytes (truncated if large) |
+
+**Security notes:**
+- Error messages are intentionally abstract and generic
+- Identical messages for "wrong schema" vs "capability doesn't exist"
+- Prevents topology probing by agents or external callers
+- Authorized introspection available via meta queries only
+
+### `<SystemError>` — Routing/Delivery Failure
+
+Emitted when a handler tries to send to an unauthorized or unreachable target.
+
+```xml
+<SystemError xmlns="">
+  <code>routing</code>
+  <message>Message could not be delivered. Please verify your target and try again.</message>
+  <retry-allowed>true</retry-allowed>
+</SystemError>
+```
+
+| Field | Description |
+|-------|-------------|
+| `code` | Error category: `routing`, `validation`, `timeout` |
+| `message` | Generic, non-revealing description |
+| `retry-allowed` | Whether agent can retry the operation |
+
+**Key properties:**
+- Keeps thread alive (agent can retry)
+- Never reveals topology (no "target doesn't exist" vs "not authorized")
+- Replaces the failed message in the flow
+
+## Agent Iteration Patterns
+
+### Blind Self-Iteration
+
+LLM agents iterate by emitting payloads with their own root tag. With unique root tags per agent, this automatically routes back to themselves.
+
+```python
+# In agent handler
+return HandlerResponse(
+    payload=ThinkPayload(reasoning="Let me think more..."),
+    to=metadata.own_name,  # Routes to self
+)
+```
+
+The pump sets `is_self_call=True` in metadata for these messages.
+
+### Visible Planning (Optional)
+
+Agents may include planning constructs in their output for clarity:
+
+```xml
+<answer>
+  I need to:
+  <todo-until condition="have final answer">
+    1. Search for relevant data
+    2. Analyze results
+    3. Synthesize conclusion
+  </todo-until>
+
+  Starting with step 1...
+</answer>
+```
+
+**Note:** `<todo-until>` is NOT interpreted by the system. It's visible structured text that LLMs can use for planning. The actual iteration happens through normal message routing.
+
+## Response Semantics Warning
+
+**Critical for LLM agents:**
+
+When you respond (return to caller via `.respond()`), your call chain is pruned:
+
+- Any sub-agents you called are effectively terminated
+- Their state/context is lost (calculator memory, scratch space, etc.)
+- You cannot call them again in the same context after responding
+
+**Therefore:** Complete ALL sub-tasks before responding. If you need results from a peer, wait for their response first.
+
+This warning is automatically included in `usage_instructions` provided to agents.
+
+---
+
+**v2.1 Specification** — Updated January 10, 2026

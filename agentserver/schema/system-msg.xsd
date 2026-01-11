@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+====================================================================
+   SYSTEM MESSAGE SCHEMA v1.0
+   ==========================
+   Defines system-reserved message types that only the pump can emit.
+   These are broadcast or injected by the organism itself, never by
+   handlers or external clients.
+
+   System messages use a distinct namespace to prevent spoofing.
+====================================================================
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="https://xml-pipeline.org/system"
+           xmlns:sys="https://xml-pipeline.org/system"
+           elementFormDefault="qualified">
+
+  <!-- ============================================================
+       LIFECYCLE MESSAGES
+       ============================================================ -->
+
+  <!--
+    <boot/> - Broadcast to all listeners at organism startup.
+
+    Agents use this to initialize, announce presence, or begin
+    awaiting input (e.g., human console listener).
+
+    The pump sends this AFTER all listeners are registered but
+    BEFORE accepting external inject-message requests.
+  -->
+  <xs:element name="boot" type="sys:Boot"/>
+
+  <xs:complexType name="Boot">
+    <xs:sequence>
+      <xs:element name="organism-name" type="xs:string"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="listener-count" type="xs:nonNegativeInteger"/>
+      <xs:element name="config" type="sys:BootConfig" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="BootConfig">
+    <xs:sequence>
+      <xs:element name="entry" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:simpleContent>
+            <xs:extension base="xs:string">
+              <xs:attribute name="key" type="xs:string" use="required"/>
+            </xs:extension>
+          </xs:simpleContent>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    <shutdown-signal/> - Broadcast to all listeners before shutdown.
+
+    Agents should complete current work, flush state, and prepare
+    to terminate. Handlers have `timeout-seconds` to finish.
+  -->
+  <xs:element name="shutdown-signal" type="sys:ShutdownSignal"/>
+
+  <xs:complexType name="ShutdownSignal">
+    <xs:sequence>
+      <xs:element name="reason" type="xs:string" minOccurs="0"/>
+      <xs:element name="mode">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="graceful"/>
+            <xs:enumeration value="immediate"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="timeout-seconds" type="xs:positiveInteger" minOccurs="0"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       ERROR / DIAGNOSTIC MESSAGES
+       ============================================================ -->
+
+  <!--
+    <huh/> - Injected when something goes wrong.
+
+    Used for:
+    - Handler returned invalid bytes (None, wrong type)
+    - Unknown root tag (no listener matched)
+    - Pipeline step failure
+    - Deserialization error
+
+    The huh message is routed to the system pipeline for logging
+    and optional alerting. Agents can also listen for huh to
+    self-correct or escalate.
+  -->
+  <xs:element name="huh" type="sys:Huh"/>
+
+  <xs:complexType name="Huh">
+    <xs:sequence>
+      <xs:element name="error-type">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="invalid-handler-response"/>
+            <xs:enumeration value="unknown-root-tag"/>
+            <xs:enumeration value="pipeline-failure"/>
+            <xs:enumeration value="deserialization-error"/>
+            <xs:enumeration value="validation-error"/>
+            <xs:enumeration value="timeout"/>
+            <xs:enumeration value="handler-exception"/>
+            <xs:enumeration value="unknown"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="message" type="xs:string"/>
+      <xs:element name="original-from" type="xs:string" minOccurs="0"/>
+      <xs:element name="original-to" type="xs:string" minOccurs="0"/>
+      <xs:element name="original-payload-type" type="xs:string" minOccurs="0"/>
+      <xs:element name="stack-trace" type="xs:string" minOccurs="0"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       HEALTH / MONITORING MESSAGES
+       ============================================================ -->
+
+  <!--
+    <heartbeat/> - Optional periodic broadcast for health monitoring.
+
+    Can be enabled in config. Agents may use this to report status
+    or detect stalled peers.
+  -->
+  <xs:element name="heartbeat" type="sys:Heartbeat"/>
+
+  <xs:complexType name="Heartbeat">
+    <xs:sequence>
+      <xs:element name="sequence" type="xs:nonNegativeInteger"/>
+      <xs:element name="uptime-seconds" type="xs:nonNegativeInteger"/>
+      <xs:element name="queue-depth" type="xs:nonNegativeInteger"/>
+      <xs:element name="active-threads" type="xs:nonNegativeInteger"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       LISTENER LIFECYCLE NOTIFICATIONS
+       ============================================================ -->
+
+  <!--
+    <listener-joined/> - Broadcast when a new listener registers.
+
+    Allows agents to discover new peers dynamically.
+  -->
+  <xs:element name="listener-joined" type="sys:ListenerJoined"/>
+
+  <xs:complexType name="ListenerJoined">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="root-tag" type="xs:string"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="is-agent" type="xs:boolean"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!--
+    <listener-left/> - Broadcast when a listener unregisters.
+  -->
+  <xs:element name="listener-left" type="sys:ListenerLeft"/>
+
+  <xs:complexType name="ListenerLeft">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="reason" type="xs:string" minOccurs="0"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+    </xs:sequence>
+  </xs:complexType>
+
+</xs:schema>

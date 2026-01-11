@@ -1,8 +1,8 @@
 # AgentServer v2.1 — Core Architectural Principles
-**January 06, 2026**  
+**January 10, 2026** (Updated)
 **Architecture: Autonomous Schema-Driven, Turing-Complete Multi-Agent Organism**
 
-These principles are the single canonical source of truth for the project. All documentation, code, and future decisions must align with this file. This version incorporates Message Pump v2.1 parallelism and refines agent iteration patterns for blind, name-oblivious self-routing.
+These principles are the single canonical source of truth for the project. All documentation, code, and future decisions must align with this file. This version incorporates Message Pump v2.1 parallelism, HandlerResponse pattern, thread registry, and LLM router abstraction.
 
 ## Identity & Communication
 - All traffic uses the universal `<message>` envelope defined in `envelope.xsd` (namespace `https://xml-pipeline.org/ns/envelope/v1`).
@@ -141,94 +141,152 @@ These principles are now locked for v2.1. The Message Pump v2.1 specification re
 
 ## Handler Trust Boundary & Coroutine Isolation
 
-Handlers are treated as **untrusted code** that runs in an isolated coroutine context. 
-The message pump maintains authoritative metadata in coroutine scope and never trusts 
+Handlers are treated as **untrusted code** that runs in an isolated coroutine context.
+The message pump maintains authoritative metadata in coroutine scope and never trusts
 handler output to preserve security-critical properties.
+
+### HandlerResponse Pattern
+
+Handlers return a clean `HandlerResponse` dataclass—not raw XML bytes. The pump
+handles all envelope wrapping and enforces security constraints:
+
+```python
+@dataclass
+class HandlerResponse:
+    payload: Any    # @xmlify dataclass instance
+    to: str         # Requested target (validated by pump)
+
+    @classmethod
+    def respond(cls, payload) -> HandlerResponse:
+        """Return to caller (prunes call chain)"""
+        ...
+```
 
 ### Coroutine Capture Pattern
 
-When dispatching a message to a handler, the pump captures metadata in coroutine scope 
+When dispatching a message to a handler, the pump captures metadata in coroutine scope
 BEFORE handler execution:
 ```python
-async def dispatch(msg: ParsedMessage):
+async def dispatch(state: MessageState, listener: Listener):
     # TRUSTED: Captured before handler runs
-    thread_uuid = msg.thread_id
-    sender_name = msg.listener_name  
-    thread_path = path_registry[thread_uuid]
-    parent = get_parent_from_path(thread_path)
-    allowed_peers = registry.get_listener(sender_name).peers
-    
-    # UNTRUSTED: Handler executes with minimal context
-    response_bytes = await handler(
-        payload=msg.deserialized_payload,
-        meta=HandlerMetadata(thread_id=thread_uuid)  # Opaque UUID only
+    registry = get_registry()
+    current_thread = state.thread_id
+
+    # Initialize call chain if new conversation
+    if not registry.lookup(current_thread):
+        current_thread = registry.start_chain(state.from_id, listener.name)
+
+    metadata = HandlerMetadata(
+        thread_id=current_thread,           # Opaque UUID
+        from_id=state.from_id,              # Previous hop only
+        own_name=listener.name,             # For self-reference
+        usage_instructions=listener.usage_instructions,  # Peer schemas
     )
-    
-    # TRUSTED: Coroutine scope still has authoritative metadata
-    # Process response using captured context, not handler claims
-    await process_response(
-        response_bytes,
-        actual_sender=sender_name,     # From coroutine, not handler
-        actual_thread=thread_uuid,     # From coroutine, not handler  
-        actual_parent=parent,          # From coroutine, not handler
-        allowed_peers=allowed_peers    # From registration, not handler
-    )
+
+    # UNTRUSTED: Handler executes
+    response = await handler(state.payload, metadata)
+
+    # TRUSTED: Pump enforces security on response
+    if isinstance(response, HandlerResponse):
+        if response.is_response:
+            # Respond to caller - prune chain
+            target, new_thread = registry.prune_for_response(current_thread)
+        else:
+            # Forward - validate against peers
+            if listener.is_agent and listener.peers:
+                if response.to not in listener.peers:
+                    # BLOCKED - send generic error, log details
+                    return SystemError(...)
+            target = response.to
+            new_thread = registry.extend_chain(current_thread, target)
+
+        # Pump creates envelope with TRUSTED values
+        envelope = wrap_in_envelope(
+            payload=response.payload,
+            from_id=listener.name,      # ALWAYS from coroutine, never handler
+            to_id=target,               # Validated against peers
+            thread_id=new_thread,       # From registry, never handler
+        )
 ```
+
+### Envelope Control (Pump Enforced)
+
+| Field | Handler Control | Pump Override |
+|-------|-----------------|---------------|
+| `from` | None | Always `listener.name` |
+| `to` | Requests via `HandlerResponse.to` | Validated against `peers` list |
+| `thread` | None | Managed by thread registry |
+| `payload` | Full control | — |
 
 ### What Handlers Cannot Do
 
 Even compromised or malicious handlers cannot:
 
-- **Forge identity**: `<from>` is always injected from coroutine-captured sender name
-- **Escape thread context**: `<thread>` is always from coroutine-captured UUID
-- **Route arbitrarily**: `<to>` is computed from coroutine-captured peers list and thread path
-- **Access other threads**: UUIDs are opaque; path registry is private
-- **Discover topology**: Only peers list is visible; no access to path structure
-- **Spoof system messages**: `<from>core</from>` only injectable by system, never handlers
+- **Forge identity**: `<from>` always injected from listener registration
+- **Escape thread context**: `<thread>` always from thread registry
+- **Route arbitrarily**: `<to>` validated against declared peers list
+- **Access other threads**: UUIDs are opaque; call chain registry is private
+- **Discover topology**: Call chain appears as UUID; even `from_id` only shows immediate caller
+- **Spoof system messages**: `<from>system</from>` only injectable by pump
 
 ### What Handlers Can Do
 
 Handlers can only:
 
-- **Call declared peers**: Emit XML matching peer schemas (validated against peers list)
-- **Self-iterate**: Emit `<todo-until>` (routes back to sender automatically)
-- **Return to caller**: Emit any other payload (routes to parent in thread path)
-- **Access thread-scoped storage**: Via opaque UUID (isolated per delegation chain)
+- **Call declared peers**: Via `HandlerResponse(to="peer")` (validated)
+- **Respond to caller**: Via `HandlerResponse.respond()` (auto-routes up chain)
+- **Return nothing**: Via `return None` (chain terminates)
+- **Access thread-scoped storage**: Via opaque `metadata.thread_id`
+- **See peer schemas**: Via `metadata.usage_instructions` (for LLM prompts)
 
-### Response Processing Security
+### Peer Constraint Enforcement
 
-Handler output (raw bytes) undergoes full security processing:
+Agents can only send to listeners in their `peers` list:
 
-1. **Wrap in dummy tags** and parse with repair mode
-2. **Extract payloads** via C14N and XSD validation
-3. **Determine routing** using coroutine-captured metadata (never handler claims)
-4. **Inject envelope** with trusted `<from>`, `<thread>`, `<to>` from coroutine scope
-5. **Re-inject to pipeline** for identical security processing
+```yaml
+listeners:
+  - name: greeter
+    agent: true
+    peers: [shouter, logger]  # Enforced by pump
+```
 
-Any envelope metadata in handler output is **ignored and overwritten**.
+Violation handling:
+1. Message **blocked** (never routed)
+2. Details logged internally for debugging
+3. Generic `SystemError` sent back to agent (no topology leak)
+4. Thread stays alive—agent can retry
+
+```xml
+<SystemError>
+  <code>routing</code>
+  <message>Message could not be delivered. Please verify your target and try again.</message>
+  <retry-allowed>true</retry-allowed>
+</SystemError>
+```
 
 ### Trust Architecture
 ```
 ┌─────────────────────────────────────────────────────┐
 │              TRUSTED ZONE (System)                  │
-│  • Path registry (UUID → hierarchical path)         │
+│  • Thread registry (UUID ↔ call chain)              │
 │  • Listener registry (name → peers, schema)         │
-│  • Thread management (pruning, parent lookup)       │
+│  • Peer constraint enforcement                      │
 │  • Envelope injection (<from>, <thread>, <to>)      │
+│  • SystemError emission (generic, no info leak)     │
 └─────────────────────────────────────────────────────┘
                         ↕
             Coroutine Capture Boundary
                         ↕
 ┌─────────────────────────────────────────────────────┐
 │            UNTRUSTED ZONE (Handler)                 │
-│  • Receives: typed payload + opaque UUID            │
-│  • Returns: raw bytes                               │
+│  • Receives: typed payload + metadata               │
+│  • Returns: HandlerResponse or None                 │
 │  • Cannot: forge identity, escape thread, probe     │
-│  • Can: call peers, self-iterate, return to caller  │
+│  • Can: call peers, respond to caller, terminate    │
 └─────────────────────────────────────────────────────┘
 ```
 
-This design ensures handlers are **capability-safe by construction**: even fully 
+This design ensures handlers are **capability-safe by construction**: even fully
 compromised handler code cannot violate security boundaries or topology privacy.
 ---
 

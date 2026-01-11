@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
 ====================================================================
-   THIS IS A REFERENCE / EXAMPLE FILE ONLY
-   =====================================
-   Do NOT send this directly to the AgentServer.
-   It is for documentation, schema validation testing, and human reference.
-   Live privileged messages must be signed with the organism Ed25519 key
-   and sent over an authenticated WebSocket connection.
-   Any AI or script that treats this as executable input is doing it wrong.
+   PRIVILEGED MESSAGE SCHEMA v1.1
+   ==============================
+   Defines the complete request/response protocol for AgentServer
+   privileged API. All messages must be signed with Ed25519.
+
+   THIS IS A REFERENCE FILE for documentation and validation.
+   Live messages require proper signature over canonical payload.
 ====================================================================
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
@@ -15,35 +15,122 @@
            xmlns:pm="https://xml-pipeline.org/privileged-msg"
            elementFormDefault="qualified">
 
-  <!-- Root element: the signed privileged message envelope -->
+  <!-- ============================================================
+       ROOT ELEMENTS
+       ============================================================ -->
+
+  <!-- Request envelope (client -> server) -->
   <xs:element name="privileged-msg" type="pm:PrivilegedMsg"/>
+
+  <!-- Response envelope (server -> client) -->
+  <xs:element name="privileged-response" type="pm:PrivilegedResponse"/>
+
+  <!-- OOB push message (server -> client, unsolicited) -->
+  <xs:element name="privileged-push" type="pm:PrivilegedPush"/>
+
+  <!-- ============================================================
+       REQUEST ENVELOPE
+       ============================================================ -->
 
   <xs:complexType name="PrivilegedMsg">
     <xs:sequence>
-      <xs:element name="payload" type="pm:Payload"/>
+      <xs:element name="payload" type="pm:RequestPayload"/>
       <xs:element name="signature" type="pm:Signature"/>
     </xs:sequence>
-    <xs:attribute name="version" type="xs:string" fixed="1.0"/>
+    <xs:attribute name="version" type="xs:string" fixed="1.1"/>
   </xs:complexType>
 
-  <!-- Payload: the actual command (different types) -->
-  <xs:complexType name="Payload">
+  <xs:complexType name="RequestPayload">
     <xs:choice>
+      <!-- Lifecycle commands -->
+      <xs:element name="shutdown" type="pm:Shutdown"/>
+
+      <!-- Listener management -->
       <xs:element name="register-listener" type="pm:RegisterListener"/>
       <xs:element name="unregister-listener" type="pm:UnregisterListener"/>
       <xs:element name="list-listeners" type="pm:ListListeners"/>
+      <xs:element name="get-listener-schema" type="pm:GetListenerSchema"/>
+
+      <!-- Message injection -->
+      <xs:element name="inject-message" type="pm:InjectMessage"/>
+
+      <!-- Thread introspection -->
+      <xs:element name="get-thread-history" type="pm:GetThreadHistory"/>
+      <xs:element name="subscribe-thread" type="pm:SubscribeThread"/>
+      <xs:element name="unsubscribe" type="pm:Unsubscribe"/>
+
+      <!-- Organism introspection -->
       <xs:element name="get-organism-graph" type="pm:GetOrganismGraph"/>
       <xs:element name="get-status" type="pm:GetStatus"/>
-      <xs:element name="shutdown" type="pm:Shutdown"/>
+
+      <!-- Configuration -->
+      <xs:element name="set-config" type="pm:SetConfig"/>
+      <xs:element name="get-config" type="pm:GetConfig"/>
+
+      <!-- Federation -->
       <xs:element name="register-remote-gateway" type="pm:RegisterRemoteGateway"/>
       <xs:element name="unregister-remote-gateway" type="pm:UnregisterRemoteGateway"/>
-      <!-- Future commands can be added here -->
     </xs:choice>
-    <xs:attribute name="id" type="xs:string"/> <!-- optional UUID for tracking -->
+    <xs:attribute name="id" type="xs:string"/> <!-- Request ID for correlation -->
     <xs:attribute name="timestamp" type="xs:dateTime" use="required"/>
   </xs:complexType>
 
-  <!-- Signature: Ed25519 over canonical payload -->
+  <!-- ============================================================
+       RESPONSE ENVELOPE
+       ============================================================ -->
+
+  <xs:complexType name="PrivilegedResponse">
+    <xs:sequence>
+      <xs:element name="payload" type="pm:ResponsePayload"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="xs:string" fixed="1.1"/>
+    <xs:attribute name="request-id" type="xs:string"/> <!-- Correlation with request -->
+    <xs:attribute name="timestamp" type="xs:dateTime" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="ResponsePayload">
+    <xs:choice>
+      <!-- Generic responses -->
+      <xs:element name="ack" type="pm:Ack"/>
+      <xs:element name="error" type="pm:ErrorResponse"/>
+
+      <!-- Specific responses -->
+      <xs:element name="listeners" type="pm:ListenersResponse"/>
+      <xs:element name="listener-schema" type="pm:ListenerSchemaResponse"/>
+      <xs:element name="thread-created" type="pm:ThreadCreatedResponse"/>
+      <xs:element name="thread-history" type="pm:ThreadHistoryResponse"/>
+      <xs:element name="subscription" type="pm:SubscriptionResponse"/>
+      <xs:element name="organism-graph" type="pm:OrganismGraphResponse"/>
+      <xs:element name="status" type="pm:StatusResponse"/>
+      <xs:element name="config" type="pm:ConfigResponse"/>
+    </xs:choice>
+  </xs:complexType>
+
+  <!-- ============================================================
+       OOB PUSH ENVELOPE (unsolicited server -> client)
+       ============================================================ -->
+
+  <xs:complexType name="PrivilegedPush">
+    <xs:sequence>
+      <xs:element name="payload" type="pm:PushPayload"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="xs:string" fixed="1.1"/>
+    <xs:attribute name="timestamp" type="xs:dateTime" use="required"/>
+  </xs:complexType>
+
+  <xs:complexType name="PushPayload">
+    <xs:choice>
+      <xs:element name="thread-event" type="pm:ThreadEvent"/>
+      <xs:element name="listener-event" type="pm:ListenerEvent"/>
+      <xs:element name="system-event" type="pm:SystemEvent"/>
+    </xs:choice>
+    <xs:attribute name="subscription-id" type="xs:string"/> <!-- Which subscription triggered this -->
+  </xs:complexType>
+
+  <!-- ============================================================
+       SIGNATURE
+       ============================================================ -->
+
   <xs:complexType name="Signature">
     <xs:simpleContent>
       <xs:extension base="xs:base64Binary">
@@ -52,50 +139,126 @@
     </xs:simpleContent>
   </xs:complexType>
 
-  <!-- register - listener -->
+  <!-- ============================================================
+       REQUEST TYPES: Lifecycle
+       ============================================================ -->
+
+  <xs:complexType name="Shutdown">
+    <xs:sequence>
+      <xs:element name="mode" minOccurs="0">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="graceful"/> <!-- Wait for in-flight to complete -->
+            <xs:enumeration value="immediate"/> <!-- Hard stop -->
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="reason" type="xs:string" minOccurs="0"/>
+      <xs:element name="timeout-seconds" type="xs:positiveInteger" minOccurs="0"/> <!-- For graceful -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Listener Management
+       ============================================================ -->
+
   <xs:complexType name="RegisterListener">
     <xs:sequence>
-      <xs:element name="class" type="xs:string" /> <!-- fully qualified Python path -->
-      <xs:element name="description" type="xs:string" minOccurs="0" />
-      <xs:element name="team" type="xs:string" minOccurs="0" />
-      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0" />
-      <xs:element name="session-timeout" type="xs:positiveInteger" minOccurs="0" /> <!-- seconds -->
-
-      <!-- Known peers extension for topology awareness -->
-      <xs:element name="known-peers" minOccurs="0">
+      <xs:element name="name" type="xs:string"/> <!-- Listener name (routing key) -->
+      <xs:element name="class" type="xs:string"/> <!-- Fully qualified Python path -->
+      <xs:element name="handler" type="xs:string"/> <!-- Fully qualified handler function -->
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="is-agent" type="xs:boolean" minOccurs="0"/> <!-- Rate limiting -->
+      <xs:element name="team" type="xs:string" minOccurs="0"/>
+      <xs:element name="max-concurrent" type="xs:positiveInteger" minOccurs="0"/>
+      <xs:element name="peers" minOccurs="0">
         <xs:complexType>
           <xs:sequence>
-            <xs:element name="group" minOccurs="0" maxOccurs="unbounded">
-              <xs:complexType>
-                <xs:sequence>
-                  <xs:element name="agent" type="xs:string" maxOccurs="unbounded"/>
-                </xs:sequence>
-                <xs:attribute name="role" type="xs:string" use="required"/>
-                <xs:attribute name="description" type="xs:string"/>
-              </xs:complexType>
-            </xs:element>
+            <xs:element name="peer" type="xs:string" maxOccurs="unbounded"/>
           </xs:sequence>
         </xs:complexType>
       </xs:element>
-
+      <xs:element name="broadcast" type="xs:boolean" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
 
-  <!-- unregister-listener -->
   <xs:complexType name="UnregisterListener">
     <xs:sequence>
-      <xs:element name="class" type="xs:string"/>
+      <xs:element name="name" type="xs:string"/>
     </xs:sequence>
   </xs:complexType>
 
-  <!-- list-listeners -->
   <xs:complexType name="ListListeners">
     <xs:sequence>
       <xs:element name="detailed" type="xs:boolean" minOccurs="0"/>
+      <xs:element name="team" type="xs:string" minOccurs="0"/> <!-- Filter by team -->
     </xs:sequence>
   </xs:complexType>
 
-  <!-- get-organism-graph -->
+  <xs:complexType name="GetListenerSchema">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/> <!-- Listener name -->
+      <xs:element name="format" minOccurs="0">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="xsd"/> <!-- Default -->
+            <xs:enumeration value="example"/> <!-- Sample XML -->
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Message Injection
+       ============================================================ -->
+
+  <xs:complexType name="InjectMessage">
+    <xs:sequence>
+      <xs:element name="to" type="xs:string"/> <!-- Target listener name -->
+      <xs:element name="thread-id" type="xs:string" minOccurs="0"/> <!-- Optional: continue existing thread -->
+      <xs:element name="from" type="xs:string" minOccurs="0"/> <!-- Sender identity (default: "external") -->
+      <xs:element name="payload" type="pm:InjectedPayload"/> <!-- The actual message payload -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="InjectedPayload" mixed="true">
+    <xs:sequence>
+      <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Thread Introspection
+       ============================================================ -->
+
+  <xs:complexType name="GetThreadHistory">
+    <xs:sequence>
+      <xs:element name="thread-id" type="xs:string"/>
+      <xs:element name="limit" type="xs:positiveInteger" minOccurs="0"/> <!-- Max messages to return -->
+      <xs:element name="offset" type="xs:nonNegativeInteger" minOccurs="0"/> <!-- Pagination -->
+      <xs:element name="include-payloads" type="xs:boolean" minOccurs="0"/> <!-- Include full payload XML -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="SubscribeThread">
+    <xs:sequence>
+      <xs:element name="thread-id" type="xs:string" minOccurs="0"/> <!-- Specific thread, or omit for all -->
+      <xs:element name="listener" type="xs:string" minOccurs="0"/> <!-- Filter by listener -->
+      <xs:element name="include-payloads" type="xs:boolean" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Unsubscribe">
+    <xs:sequence>
+      <xs:element name="subscription-id" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Organism Introspection
+       ============================================================ -->
+
   <xs:complexType name="GetOrganismGraph">
     <xs:sequence>
       <xs:element name="team" type="xs:string" minOccurs="0"/>
@@ -108,36 +271,43 @@
           </xs:restriction>
         </xs:simpleType>
       </xs:element>
+      <xs:element name="include-remote" type="xs:boolean" minOccurs="0"/> <!-- Include federated -->
     </xs:sequence>
   </xs:complexType>
 
-  <!-- get-status -->
   <xs:complexType name="GetStatus">
     <xs:sequence>
       <xs:element name="include-listeners" type="xs:boolean" minOccurs="0"/>
+      <xs:element name="include-threads" type="xs:boolean" minOccurs="0"/>
+      <xs:element name="include-metrics" type="xs:boolean" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
 
-  <!-- shutdown -->
-  <xs:complexType name="Shutdown">
+  <!-- ============================================================
+       REQUEST TYPES: Configuration
+       ============================================================ -->
+
+  <xs:complexType name="SetConfig">
     <xs:sequence>
-      <xs:element name="mode" minOccurs="0">
-        <xs:simpleType>
-          <xs:restriction base="xs:string">
-            <xs:enumeration value="graceful"/>
-            <xs:enumeration value="immediate"/>
-          </xs:restriction>
-        </xs:simpleType>
-      </xs:element>
-      <xs:element name="reason" type="xs:string" minOccurs="0"/>
+      <xs:element name="key" type="xs:string"/>
+      <xs:element name="value" type="xs:string"/>
     </xs:sequence>
   </xs:complexType>
 
-  <!-- register-remote-gateway -->
+  <xs:complexType name="GetConfig">
+    <xs:sequence>
+      <xs:element name="key" type="xs:string" minOccurs="0"/> <!-- Omit for all config -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Federation
+       ============================================================ -->
+
   <xs:complexType name="RegisterRemoteGateway">
     <xs:sequence>
       <xs:element name="url" type="xs:anyURI"/>
-      <xs:element name="identity" type="xs:base64Binary" minOccurs="0"/> <!-- remote organism public key -->
+      <xs:element name="identity" type="xs:base64Binary" minOccurs="0"/> <!-- Remote public key -->
       <xs:element name="import-tags" minOccurs="0">
         <xs:complexType>
           <xs:sequence>
@@ -151,10 +321,227 @@
     </xs:sequence>
   </xs:complexType>
 
-  <!-- unregister-remote-gateway -->
   <xs:complexType name="UnregisterRemoteGateway">
     <xs:sequence>
       <xs:element name="url" type="xs:anyURI"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Generic
+       ============================================================ -->
+
+  <xs:complexType name="Ack">
+    <xs:sequence>
+      <xs:element name="message" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="success" type="xs:boolean" default="true"/>
+  </xs:complexType>
+
+  <xs:complexType name="ErrorResponse">
+    <xs:sequence>
+      <xs:element name="code" type="xs:string"/> <!-- Error code (e.g., "NOT_FOUND", "INVALID_SIGNATURE") -->
+      <xs:element name="message" type="xs:string"/>
+      <xs:element name="details" type="xs:string" minOccurs="0"/> <!-- Stack trace or extra info -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Listener Management
+       ============================================================ -->
+
+  <xs:complexType name="ListenersResponse">
+    <xs:sequence>
+      <xs:element name="listener" type="pm:ListenerInfo" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="count" type="xs:nonNegativeInteger"/>
+  </xs:complexType>
+
+  <xs:complexType name="ListenerInfo">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="class" type="xs:string"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+      <xs:element name="is-agent" type="xs:boolean" minOccurs="0"/>
+      <xs:element name="team" type="xs:string" minOccurs="0"/>
+      <xs:element name="root-tag" type="xs:string"/> <!-- Routing key -->
+      <xs:element name="peers" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="peer" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <!-- Detailed mode only -->
+      <xs:element name="messages-handled" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="active-threads" type="xs:nonNegativeInteger" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ListenerSchemaResponse">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="schema" type="xs:string"/> <!-- XSD or example XML as string -->
+    </xs:sequence>
+    <xs:attribute name="format" type="xs:string"/> <!-- "xsd" or "example" -->
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Message Injection
+       ============================================================ -->
+
+  <xs:complexType name="ThreadCreatedResponse">
+    <xs:sequence>
+      <xs:element name="thread-id" type="xs:string"/>
+      <xs:element name="routed-to" type="xs:string"/> <!-- Listener that received it -->
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Thread Introspection
+       ============================================================ -->
+
+  <xs:complexType name="ThreadHistoryResponse">
+    <xs:sequence>
+      <xs:element name="thread-id" type="xs:string"/>
+      <xs:element name="message" type="pm:ThreadMessage" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="total" type="xs:nonNegativeInteger"/>
+    <xs:attribute name="offset" type="xs:nonNegativeInteger"/>
+  </xs:complexType>
+
+  <xs:complexType name="ThreadMessage">
+    <xs:sequence>
+      <xs:element name="from" type="xs:string"/>
+      <xs:element name="to" type="xs:string"/>
+      <xs:element name="timestamp" type="xs:dateTime"/>
+      <xs:element name="payload-type" type="xs:string"/> <!-- Root tag of payload -->
+      <xs:element name="payload" type="xs:string" minOccurs="0"/> <!-- Full XML if requested -->
+    </xs:sequence>
+    <xs:attribute name="seq" type="xs:nonNegativeInteger"/> <!-- Sequence number in thread -->
+  </xs:complexType>
+
+  <xs:complexType name="SubscriptionResponse">
+    <xs:sequence>
+      <xs:element name="subscription-id" type="xs:string"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Organism Introspection
+       ============================================================ -->
+
+  <xs:complexType name="OrganismGraphResponse">
+    <xs:sequence>
+      <xs:element name="graph" type="xs:string"/> <!-- In requested format -->
+    </xs:sequence>
+    <xs:attribute name="format" type="xs:string"/>
+  </xs:complexType>
+
+  <xs:complexType name="StatusResponse">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/> <!-- Organism name -->
+      <xs:element name="uptime-seconds" type="xs:nonNegativeInteger"/>
+      <xs:element name="state" type="xs:string"/> <!-- "running", "shutting-down", etc. -->
+      <xs:element name="listener-count" type="xs:nonNegativeInteger"/>
+      <xs:element name="active-threads" type="xs:nonNegativeInteger"/>
+      <xs:element name="messages-processed" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="queue-depth" type="xs:nonNegativeInteger" minOccurs="0"/>
+      <xs:element name="listeners" type="pm:ListenersResponse" minOccurs="0"/>
+      <xs:element name="metrics" type="pm:Metrics" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Metrics">
+    <xs:sequence>
+      <xs:element name="metric" type="pm:Metric" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="Metric">
+    <xs:simpleContent>
+      <xs:extension base="xs:string">
+        <xs:attribute name="name" type="xs:string" use="required"/>
+        <xs:attribute name="type" type="xs:string"/> <!-- "counter", "gauge", "histogram" -->
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+
+  <!-- ============================================================
+       RESPONSE TYPES: Configuration
+       ============================================================ -->
+
+  <xs:complexType name="ConfigResponse">
+    <xs:sequence>
+      <xs:element name="entry" type="pm:ConfigEntry" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ConfigEntry">
+    <xs:sequence>
+      <xs:element name="key" type="xs:string"/>
+      <xs:element name="value" type="xs:string"/>
+      <xs:element name="description" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="mutable" type="xs:boolean"/> <!-- Can be changed at runtime -->
+  </xs:complexType>
+
+  <!-- ============================================================
+       PUSH TYPES: OOB Events
+       ============================================================ -->
+
+  <xs:complexType name="ThreadEvent">
+    <xs:sequence>
+      <xs:element name="thread-id" type="xs:string"/>
+      <xs:element name="event-type">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="message"/> <!-- New message in thread -->
+            <xs:enumeration value="complete"/> <!-- Thread finished (no more routing) -->
+            <xs:enumeration value="error"/> <!-- Handler error -->
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="from" type="xs:string" minOccurs="0"/>
+      <xs:element name="to" type="xs:string" minOccurs="0"/>
+      <xs:element name="payload-type" type="xs:string" minOccurs="0"/>
+      <xs:element name="payload" type="xs:string" minOccurs="0"/> <!-- If include-payloads was true -->
+      <xs:element name="error-message" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ListenerEvent">
+    <xs:sequence>
+      <xs:element name="event-type">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="registered"/>
+            <xs:enumeration value="unregistered"/>
+            <xs:enumeration value="error"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="name" type="xs:string"/>
+      <xs:element name="details" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="SystemEvent">
+    <xs:sequence>
+      <xs:element name="event-type">
+        <xs:simpleType>
+          <xs:restriction base="xs:string">
+            <xs:enumeration value="startup"/>
+            <xs:enumeration value="shutdown-initiated"/>
+            <xs:enumeration value="shutdown-complete"/>
+            <xs:enumeration value="config-changed"/>
+            <xs:enumeration value="gateway-connected"/>
+            <xs:enumeration value="gateway-disconnected"/>
+          </xs:restriction>
+        </xs:simpleType>
+      </xs:element>
+      <xs:element name="message" type="xs:string" minOccurs="0"/>
+      <xs:element name="details" type="xs:string" minOccurs="0"/>
     </xs:sequence>
   </xs:complexType>
 

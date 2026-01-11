@@ -1,77 +1,204 @@
 # AgentServer v2.1 — Handler Contract
-**January 08, 2026**
+**January 10, 2026** (Updated)
 
-This document is the single canonical specification for all capability handlers in AgentServer v2.1.  
+This document is the single canonical specification for all capability handlers in AgentServer v2.1.
 All examples, documentation, and implementation must conform to this contract.
 
-## Handler Signature (Locked)
+## Handler Signature
 
-Every handler **must** be declared with the following exact signature:
+Every handler **must** be declared with the following signature:
 
 ```python
 async def handler(
     payload: PayloadDataclass,      # XSD-validated, deserialized @xmlify dataclass instance
-    metadata: HandlerMetadata       # Minimal trustworthy context provided by the message pump
-) -> bytes:
+    metadata: HandlerMetadata       # Trustworthy context provided by the message pump
+) -> HandlerResponse | None:
     ...
 ```
 
 - Handlers **must** be asynchronous (`async def`).
 - Synchronous functions are not permitted and will not be auto-wrapped.
 - The `metadata` parameter is mandatory.
-- The return value **must** be a `bytes` object containing one or more raw XML payload fragments.
-- Returning `None` or any non-`bytes` value is a programming error and will trigger a protective `<huh>` emission.
+- Return `HandlerResponse` to send a message, or `None` for no response.
+
+## HandlerResponse
+
+Handlers return a clean dataclass + target. The pump handles envelope wrapping.
+
+```python
+@dataclass
+class HandlerResponse:
+    payload: Any    # @xmlify dataclass instance
+    to: str         # Target listener name (or use .respond() for caller)
+```
+
+### Forward to Named Target
+```python
+return HandlerResponse(
+    payload=GreetingResponse(message="Hello!"),
+    to="shouter",
+)
+```
+
+### Respond to Caller (Prunes Call Chain)
+```python
+return HandlerResponse.respond(
+    payload=ResultPayload(value=42)
+)
+```
+
+When using `.respond()`, the pump:
+1. Looks up the call chain from thread registry
+2. Prunes the last segment (the responder)
+3. Routes back to the caller
+4. Sub-threads are terminated (see Response Semantics below)
+
+### No Response
+```python
+return None  # Chain ends here, no message emitted
+```
 
 ## HandlerMetadata
 
 ```python
-@dataclass(frozen=True)
+@dataclass
 class HandlerMetadata:
-    thread_id: str                  # Opaque thread UUID — safe for thread-scoped storage
-    own_name: str | None = None     # Registered name of the executing listener.
-                                    # Populated ONLY for listeners with `agent: true` in organism.yaml
+    thread_id: str                  # Opaque thread UUID — maps to hidden call chain
+    from_id: str                    # Who sent this message (previous hop)
+    own_name: str | None = None     # This listener's name (only if agent: true)
+    is_self_call: bool = False      # True if message is from self
+    usage_instructions: str = ""    # Auto-generated peer schemas for LLM prompts
 ```
 
 ### Field Rationale
-- `thread_id`: Enables isolated per-thread state (e.g., conversation memory, calculator history) without exposing topology.
-- `own_name`: Allows LLM agents to produce self-referential reasoning text while remaining blind to routing mechanics.
 
-No sender identity (`from_id`) is provided — preserving full topology privacy.
+| Field | Purpose |
+|-------|---------|
+| `thread_id` | Opaque UUID for thread-scoped storage. Maps internally to call chain (hidden from handler). |
+| `from_id` | Previous hop in call chain. Useful for context but not for routing (use `.respond()`). |
+| `own_name` | Enables self-referential reasoning. Only populated for `agent: true` listeners. |
+| `is_self_call` | Detect self-messages (e.g., `<todo-until>` loops). |
+| `usage_instructions` | Auto-generated from peer schemas. Inject into LLM system prompt. |
 
 ## Security Model
 
-The message pump captures all security-critical information (sender name, thread hierarchy, peers list enforcement) in trusted coroutine scope **before** invoking the handler.
+The message pump enforces security boundaries. Handlers are **untrusted code**.
 
-Handlers are treated as **untrusted code**. They receive only the minimal safe context defined above and cannot:
-- Forge provenance
-- Escape thread boundaries
-- Probe or leak topology
-- Route arbitrarily
+### Envelope Control (Pump Enforced)
+
+| Field | Handler Control | Pump Override |
+|-------|-----------------|---------------|
+| `from` | None | Always set to `listener.name` |
+| `to` | Requests target | Validated against `peers` list |
+| `thread` | None | Managed by thread registry |
+| `payload` | Full control | — |
+
+### Peer Constraint Enforcement
+
+Agents can only send to listeners declared in their `peers` list:
+
+```yaml
+listeners:
+  - name: greeter
+    agent: true
+    peers: [shouter, logger]  # Can only send to these
+```
+
+If an agent tries to send to an undeclared peer:
+1. Message is **blocked** (never routed)
+2. Details logged internally (for debugging)
+3. Generic `SystemError` sent back to agent (no topology leak)
+4. Thread stays alive — agent can retry
+
+```xml
+<SystemError>
+  <code>routing</code>
+  <message>Message could not be delivered. Please verify your target and try again.</message>
+  <retry-allowed>true</retry-allowed>
+</SystemError>
+```
+
+### Thread Privacy
+
+- Handlers see opaque UUIDs, never actual call chains
+- Call chain `console.router.greeter.shouter` → appears as `uuid-xyz`
+- Even `from_id` only reveals immediate caller, not full path
+
+## Response Semantics
+
+**Critical for LLM agents to understand:**
+
+When you **respond** (return to caller via `.respond()`), your call chain is pruned:
+
+- Any sub-agents you called are effectively terminated
+- Their state/context is lost (calculator memory, scratch space, etc.)
+- You cannot call them again in the same context after responding
+
+**Therefore:** Complete ALL sub-tasks before responding. If you need results from a peer, wait for their response first.
+
+This is injected into `usage_instructions` automatically.
 
 ## Example Handlers
 
-**Pure tool (no agent flag):**
+### Pure Tool (No Agent Flag)
+
 ```python
-async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> bytes:
+async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> HandlerResponse:
     result = payload.a + payload.b
-    return f"<result>{result}</result>".encode("utf-8")
+    return HandlerResponse(
+        payload=ResultPayload(value=result),
+        to=metadata.from_id,  # Return to whoever called
+    )
 ```
 
-**LLM agent (agent: true):**
+### LLM Agent
+
 ```python
-async def research_handler(payload: ResearchPayload, metadata: HandlerMetadata) -> bytes:
-    own = metadata.own_name or "researcher"  # safe fallback
-    return b"""
-    <thought>I am the """ + own.encode() + b""" agent. Next step...</thought>
-    <calculator.add.addpayload><a>7</a><b>35</b></calculator.add.addpayload>
-    """
+async def research_handler(payload: ResearchPayload, metadata: HandlerMetadata) -> HandlerResponse:
+    from agentserver.llm import complete
+
+    # Build prompt with peer awareness
+    system_prompt = metadata.usage_instructions + "\n\nYou are a research agent."
+
+    response = await complete(
+        model="grok-4.1",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": payload.query},
+        ],
+        agent_id=metadata.own_name,
+    )
+
+    return HandlerResponse(
+        payload=ResearchResult(answer=response.content),
+        to="summarizer",  # Forward to next agent
+    )
 ```
 
-## References in Other Documentation
+### Terminal Handler (Display Only)
 
-- All code examples in README.md, self-grammar-generation.md, and configuration.md must match this contract.
-- listener-class-v2.1.md now references this file as the authoritative source for signature and metadata.
+```python
+async def console_display(payload: ConsoleOutput, metadata: HandlerMetadata) -> None:
+    print(f"[{payload.source}] {payload.text}")
+    return None  # End of chain
+```
+
+## Backwards Compatibility
+
+Legacy handlers returning `bytes` are still supported but deprecated:
+
+```python
+# DEPRECATED - still works but not recommended
+async def old_handler(payload, metadata) -> bytes:
+    return b"<result>...</result>"
+```
+
+New code should use `HandlerResponse` for:
+- Type safety
+- Automatic envelope wrapping
+- Peer constraint enforcement
+- Thread chain management
 
 ---
 
-This contract is now **locked** for v2.1
+**v2.1 Contract** — Updated January 10, 2026
