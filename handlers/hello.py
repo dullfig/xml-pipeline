@@ -126,15 +126,21 @@ async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetad
 
     Routes output to the TUI console if available, otherwise prints to stdout.
     """
+    console = None
     try:
         from run_organism import get_console
         console = get_console()
-        if console and hasattr(console, 'on_response'):
-            console.on_response("response", payload)
-            return None
     except ImportError:
         pass
 
-    # Fallback: print to stdout
+    if console and hasattr(console, 'on_response'):
+        try:
+            console.on_response("shouter", payload)
+            return  # Success - don't fall through to print
+        except Exception as e:
+            # Debug: show error but continue to fallback
+            print(f"\n\033[31m[console error] {e}\033[0m")
+
+    # Fallback: print to stdout (only if console not available or failed)
     print(f"\n\033[36m[response] {payload.message}\033[0m")
     return None

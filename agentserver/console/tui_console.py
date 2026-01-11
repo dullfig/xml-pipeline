@@ -253,8 +253,7 @@ class TUIConsole:
             self._print_simple(text, style)
         else:
             self.output.append(text, style)
-            if self.app and self.app.is_running:
-                self.app.invalidate()
+            self._invalidate()
 
     def print_raw(self, text: str, style: str = "output"):
         """Print without timestamp."""
@@ -262,7 +261,19 @@ class TUIConsole:
             self._print_simple(text, style)
         else:
             self.output.append_raw(text, style)
-            if self.app and self.app.is_running:
+            self._invalidate()
+
+    def _invalidate(self):
+        """Invalidate the app to trigger redraw (thread-safe)."""
+        if self.app and self.app.is_running:
+            # Use call_soon_threadsafe for cross-task updates
+            try:
+                loop = self.app.loop
+                if loop and loop.is_running():
+                    loop.call_soon_threadsafe(self.app.invalidate)
+                else:
+                    self.app.invalidate()
+            except Exception:
                 self.app.invalidate()
 
     def _print_simple(self, text: str, style: str = "output"):
