@@ -106,8 +106,8 @@ class OutputBuffer:
             self.lines = self.lines[-self.max_lines:]
 
     def get_formatted_text(self) -> FormattedText:
-        """Get formatted text for display - only show last N lines."""
-        # Only return the most recent lines that fit on screen
+        """Get formatted text for display - show last N lines."""
+        # Only return the most recent lines
         visible = self.lines[-self.visible_lines:] if len(self.lines) > self.visible_lines else self.lines
         result = []
         for style, text in visible:
@@ -188,24 +188,27 @@ class TUIConsole:
             """Handle Ctrl+L - clear output."""
             self.output.clear()
 
-        # Output area (scrolling) - use scroll_offsets to keep bottom visible
+        # Output control
         output_control = FormattedTextControl(
             text=lambda: self.output.get_formatted_text(),
             focusable=False,
         )
 
-        # Create window that always scrolls to bottom
-        from prompt_toolkit.layout.controls import UIContent
-
+        # Output window - don't extend height, just show what we have
         output_window = Window(
             content=output_control,
             wrap_lines=True,
-            right_margins=[ScrollbarMargin(display_arrows=True)],
-            always_hide_cursor=True,
+            dont_extend_height=True,  # Only take space needed
         )
 
-        # Store reference so we can scroll
-        self.output_window = output_window
+        # Empty filler that expands to push output to bottom
+        filler = Window(height=Dimension(weight=1))
+
+        # Upper area: filler on top, output at bottom
+        upper_area = HSplit([
+            filler,
+            output_window,
+        ])
 
         # Separator line with status
         def get_separator():
@@ -243,7 +246,7 @@ class TUIConsole:
 
         # Main layout
         root = HSplit([
-            output_window,
+            upper_area,  # Filler + output (output at bottom)
             separator,
             input_row,
         ])
