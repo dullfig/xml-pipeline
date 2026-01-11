@@ -104,12 +104,26 @@ class OutputBuffer:
         if len(self.lines) > self.max_lines:
             self.lines = self.lines[-self.max_lines:]
 
-    def get_formatted_text(self) -> FormattedText:
-        """Get formatted text for display - all lines."""
+    def get_formatted_text(self, scroll_offset: int = 0) -> FormattedText:
+        """Get formatted text for display.
+
+        scroll_offset: 0 = show bottom, positive = scroll up N lines
+        """
         result = []
-        for style, text in self.lines:
-            result.append((f"class:{style}", text))
-            result.append(("", "\n"))
+
+        if scroll_offset == 0:
+            # Show all lines (newest at bottom)
+            for style, text in self.lines:
+                result.append((f"class:{style}", text))
+                result.append(("", "\n"))
+        else:
+            # Show lines up to scroll_offset from end
+            end_idx = len(self.lines) - scroll_offset
+            if end_idx > 0:
+                for style, text in self.lines[:end_idx]:
+                    result.append((f"class:{style}", text))
+                    result.append(("", "\n"))
+
         return FormattedText(result)
 
     def clear(self):
@@ -184,40 +198,38 @@ class TUIConsole:
         def handle_ctrl_l(event):
             """Handle Ctrl+L - clear output."""
             self.output.clear()
-            self.user_scrolled = False
+            self.scroll_offset = 0
+
+        # Track scroll offset (0 = bottom, positive = lines from bottom)
+        self.scroll_offset = 0
 
         @kb.add("pageup")
         def handle_page_up(event):
             """Scroll output up."""
-            self.output_window.vertical_scroll = max(0, self.output_window.vertical_scroll - 10)
-            self.user_scrolled = True
+            max_offset = max(0, len(self.output.lines) - 5)
+            self.scroll_offset = min(self.scroll_offset + 10, max_offset)
 
         @kb.add("pagedown")
         def handle_page_down(event):
             """Scroll output down."""
-            self.output_window.vertical_scroll += 10
-            # Check if at bottom
-            if self.output_window.vertical_scroll >= len(self.output.lines) - 5:
-                self.user_scrolled = False
+            self.scroll_offset = max(0, self.scroll_offset - 10)
 
         @kb.add("end")
         def handle_end(event):
             """Scroll to bottom."""
-            self.output_window.vertical_scroll = 999999
-            self.user_scrolled = False
+            self.scroll_offset = 0
 
         @kb.add("home")
         def handle_home(event):
             """Scroll to top."""
-            self.output_window.vertical_scroll = 0
-            self.user_scrolled = True
+            self.scroll_offset = max(0, len(self.output.lines) - 5)
 
-        # Track if user manually scrolled
-        self.user_scrolled = False
+        # Output control - uses scroll_offset to show correct portion
+        def get_visible_output():
+            return self.output.get_formatted_text(self.scroll_offset)
 
-        # Output control
         output_control = FormattedTextControl(
-            text=lambda: self.output.get_formatted_text(),
+            text=get_visible_output,
             focusable=False,
         )
 
@@ -226,8 +238,6 @@ class TUIConsole:
             content=output_control,
             wrap_lines=True,
         )
-        # Start scrolled to bottom
-        self.output_window.vertical_scroll = 999999
 
         # Separator line with status (shows scroll hint if not at bottom)
         def get_separator():
@@ -300,9 +310,6 @@ class TUIConsole:
         """Invalidate the app to trigger redraw."""
         if self.app:
             try:
-                # Auto-scroll to bottom only if user hasn't manually scrolled up
-                if hasattr(self, 'output_window') and not getattr(self, 'user_scrolled', False):
-                    self.output_window.vertical_scroll = 999999
                 self.app.invalidate()
             except Exception:
                 pass
