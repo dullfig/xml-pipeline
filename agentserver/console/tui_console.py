@@ -112,7 +112,7 @@ class OutputBuffer:
 
         # Check if cursor is at end (user hasn't scrolled up)
         old_text = self.buffer.text
-        was_at_end = self.buffer.cursor_position >= len(old_text)
+        was_at_end = self.is_at_bottom()  # Use new method
 
         # Update buffer text
         text = "\n".join(self._lines)
@@ -120,9 +120,10 @@ class OutputBuffer:
         if was_at_end:
             # Stay at bottom - auto-scroll
             self.buffer.set_document(
-                Document(text=text, cursor_position=len(text)),
+                Document(text=text),  # Removed cursor_position
                 bypass_readonly=True
             )
+            self.buffer.cursor_position = len(text)  # Force bottom
         else:
             # Preserve scroll position - silent append
             old_pos = self.buffer.cursor_position
@@ -131,15 +132,13 @@ class OutputBuffer:
                 bypass_readonly=True
             )
 
-    def is_at_bottom(self) -> bool:
-        """Check if output is scrolled to bottom (or near bottom)."""
-        doc = self.buffer.document
-        # Consider "at bottom" if on last 3 lines
-        return doc.cursor_position_row >= doc.line_count - 3
-
     def scroll_to_bottom(self):
-        """Scroll to the very bottom."""
+        """Snap to bottom."""
         self.buffer.cursor_position = len(self.buffer.text)
+
+    def is_at_bottom(self) -> bool:
+        """Cursor at/near end? (tolerance 1 line)."""
+        return self.buffer.cursor_position >= len(self.buffer.text) - len(self.buffer.text.split('\n', 1)[0]) - 1
 
     def clear(self):
         """Clear output."""
