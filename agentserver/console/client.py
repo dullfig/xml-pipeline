@@ -10,6 +10,7 @@ import asyncio
 import getpass
 import json
 import sys
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -26,10 +27,15 @@ try:
 except ImportError:
     PROMPT_TOOLKIT_AVAILABLE = False
 
+from ..config import get_agent_config_store, CONFIG_DIR
+
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 MAX_LOGIN_ATTEMPTS = 3
+
+# Default organism config path
+DEFAULT_ORGANISM_CONFIG = Path("config/organism.yaml")
 
 
 class ConsoleClient:
@@ -131,15 +137,17 @@ class ConsoleClient:
         """Print available commands."""
         print("""
 Available commands:
-  /help       - Show this help
-  /status     - Show server status
-  /listeners  - List available targets
-  /targets    - Alias for /listeners
-  /quit       - Disconnect and exit
+  /help              - Show this help
+  /status            - Show server status
+  /listeners         - List available targets
+  /targets           - Alias for /listeners
+  /configure         - Edit organism.yaml (swarm wiring)
+  /configure @agent  - Edit agent config (prompt, model, etc.)
+  /quit              - Disconnect and exit
 
 Send messages:
-  @target message   - Send message to a target listener
-                      Example: @greeter Hello there!
+  @target message    - Send message to a target listener
+                       Example: @greeter Hello there!
 """)
 
     async def handle_command(self, line: str) -> bool:
@@ -172,6 +180,23 @@ Send messages:
                         print(f"  - {name}")
                 else:
                     print("No targets available (pipeline not running)")
+        elif line == "/configure":
+            # Edit organism.yaml
+            await self._configure_organism()
+        elif line.startswith("/configure @"):
+            # Edit agent config: /configure @agent
+            agent_name = line[12:].strip()
+            if agent_name:
+                await self._configure_agent(agent_name)
+            else:
+                print("Usage: /configure @agent_name")
+        elif line.startswith("/configure "):
+            # Also support /configure agent without @
+            agent_name = line[11:].strip()
+            if agent_name:
+                await self._configure_agent(agent_name)
+            else:
+                print("Usage: /configure @agent_name")
         elif line.startswith("/"):
             print(f"Unknown command: {line}")
         elif line.startswith("@"):
@@ -189,6 +214,72 @@ Send messages:
             print("Type /listeners to see available targets.")
 
         return True
+
+    async def _configure_organism(self):
+        """Open organism.yaml in editor."""
+        from .editor import edit_text, PROMPT_TOOLKIT_AVAILABLE as EDITOR_AVAILABLE
+
+        # Find organism.yaml
+        organism_path = DEFAULT_ORGANISM_CONFIG
+        if not organism_path.exists():
+            # Try absolute path in config dir
+            organism_path = CONFIG_DIR / "organism.yaml"
+
+        if not organism_path.exists():
+            print(f"organism.yaml not found at {organism_path}")
+            print("Create one or specify path in configuration.")
+            return
+
+        # Load content
+        content = organism_path.read_text()
+
+        if EDITOR_AVAILABLE:
+            # Use built-in editor
+            edited, saved = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: edit_text(content, title=f"organism.yaml")
+            )
+
+            if saved and edited is not None:
+                organism_path.write_text(edited)
+                print(f"Saved {organism_path}")
+                print("Note: Restart server to apply changes.")
+            else:
+                print("Cancelled.")
+        else:
+            print(f"Edit manually: {organism_path}")
+
+    async def _configure_agent(self, agent_name: str):
+        """Open agent config in editor."""
+        from .editor import edit_text, PROMPT_TOOLKIT_AVAILABLE as EDITOR_AVAILABLE
+
+        store = get_agent_config_store()
+
+        # Load or create config content
+        content = store.load_yaml(agent_name)
+        config_path = store.path_for(agent_name)
+
+        if EDITOR_AVAILABLE:
+            # Use built-in editor
+            edited, saved = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: edit_text(content, title=f"Agent: {agent_name}")
+            )
+
+            if saved and edited is not None:
+                try:
+                    store.save_yaml(agent_name, edited)
+                    print(f"Saved {config_path}")
+                except Exception as e:
+                    print(f"Error saving: {e}")
+            else:
+                print("Cancelled.")
+        else:
+            # Fallback: show path
+            if not config_path.exists():
+                # Create default
+                store.save_yaml(agent_name, content)
+            print(f"Edit manually: {config_path}")
 
     async def run(self):
         """Main client loop."""
