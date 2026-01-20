@@ -12,12 +12,16 @@ for diagnostic <huh>).
 Part of AgentServer v2.1 message pump.
 """
 
+from pathlib import Path
+
 from lxml import etree
+
 from xml_pipeline.message_bus.message_state import MessageState
 
 # Load envelope.xsd once at module import (startup time)
-# In real implementation, move this to a config loader or bus init
-_ENVELOPE_XSD = etree.XMLSchema(file="xml_pipeline/schema/envelope.xsd")
+# Path is relative to this file: steps/ → message_bus/ → xml_pipeline/ → schema/
+_SCHEMA_PATH = Path(__file__).parent.parent.parent / "schema" / "envelope.xsd"
+_ENVELOPE_XSD = etree.XMLSchema(file=str(_SCHEMA_PATH))
 
 
 async def envelope_validation_step(state: MessageState) -> MessageState:

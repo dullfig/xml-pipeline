@@ -9,6 +9,11 @@ venv/
 .venv/
 ENV/
 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
 # Secrets & config
 .env
 .env.local
