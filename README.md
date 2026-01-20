@@ -1,152 +1,220 @@
-# AgentServer — The Living Substrate (v2.1)
-***"It just works... safely."***
+# xml-pipeline
 
-**January 06, 2026**  
-**Architecture: Autonomous Schema-Driven, Turing-Complete Multi-Agent Organism**
+**Schema-driven XML message bus for multi-agent systems.**
 
-## The Rant
-**Why XML?**  
-[Why not JSON?](docs/why-not-json.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-XML is the sovereign wire format — standards-based, self-describing, attack-resistant, and evolvable without drift. JSON was a quick hack that escaped into the wild and became the default for everything, including AI tool calling, where its brittleness causes endless prompt surgery and validation headaches.
+xml-pipeline is a Python library for building multi-agent systems with validated XML message passing. Agents communicate through typed payloads, validated against auto-generated XSD schemas, with built-in LLM routing and conversation memory.
 
-This project chooses XML deliberately. The organism enforces contracts exactly (XSD validation, no transcription bugs), tolerates dirty streams (repair + dummy extraction), and keeps reasoning visible. No fragile conventions. No escaping hell. Just bounded, auditable computation.
+## Why XML?
 
-Read the full rant [here](docs/why-not-json.md) for the history, pitfalls, and why XML wins permanently.
+JSON was a quick hack that became the default for AI tool calling, where its brittleness causes endless prompt surgery and validation headaches. xml-pipeline chooses XML deliberately:
 
-## What It Is
-AgentServer is a production-ready substrate for the `xml-pipeline` nervous system. Version 2.1 evolves the design around parallel per-listener pipelines, true concurrent broadcast, opaque UUID threading for privacy, and blind agent self-iteration—all while preserving strict validation and handler purity.
+- **Exact contracts** — XSD validation catches malformed messages before they cause problems
+- **Tolerant parsing** — Repair mode recovers from LLM output quirks
+- **Self-describing** — Namespaces prevent collision, schemas are discoverable
+- **No escaping hell** — Mixed content, nested structures, all handled cleanly
 
-See [Core Architectural Principles](docs/core-principles-v2.1.md) for the single canonical source of truth.
+Read the [full rationale](docs/why-not-json.md).
 
-## Core Philosophy
-- **Autonomous DNA:** Listeners declare their contract via `@xmlify` dataclasses; the organism auto-generates XSDs, examples, and tool prompts.
-- **Schema-Locked Intelligence:** Payloads validated directly against XSD (lxml) → deserialized to typed instances → pure handlers.
-- **Multi-Response Tolerance:** Handlers return `HandlerResponse` dataclasses; bus extracts payloads and routes them (perfect for parallel tool calls or multi-step workflows).
-- **Computational Sovereignty:** Turing-complete via blind self-calls, subthreading primitives, concurrent broadcast, and visible reasoning — all bounded by private thread hierarchy and local-only control.
+## Installation
 
-## Developer Experience — Create a Listener in 12 Lines
-**No manual schemas. No brittle JSON conventions. No hand-written prompts.**  
-Just declare a dataclass contract and a one-line human description. The organism handles validation, XSD, examples, and tool prompts automatically.
+```bash
+pip install xml-pipeline
+
+# With LLM provider support
+pip install xml-pipeline[anthropic]    # Anthropic Claude
+pip install xml-pipeline[openai]       # OpenAI GPT
+
+# With all features
+pip install xml-pipeline[all]
+```
+
+## Quick Start
+
+### 1. Define a payload
 
 ```python
 from dataclasses import dataclass
 from third_party.xmlable import xmlify
+
+@xmlify
+@dataclass
+class Greeting:
+    name: str
+```
+
+### 2. Write a handler
+
+```python
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass
-class AddPayload:
-    a: int
-    b: int
+class GreetingReply:
+    message: str
 
-@xmlify
-@dataclass
-class ResultPayload:
-    value: int
-
-async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> HandlerResponse:
-    """Handlers MUST be async and return HandlerResponse."""
-    result = payload.a + payload.b
-    return HandlerResponse.respond(payload=ResultPayload(value=result))
-
-# In organism.yaml:
-# listeners:
-#   - name: calculator.add
-#     payload_class: mymodule.AddPayload
-#     handler: mymodule.add_handler
-#     description: "Adds two integers and returns their sum."
+async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> HandlerResponse:
+    return HandlerResponse(
+        payload=GreetingReply(message=f"Hello, {payload.name}!"),
+        to="output",
+    )
 ```
 
-The organism now speaks `<add>` — fully validated, typed, and discoverable.<br/>
-Unlike rigid platforms requiring custom mappings or fragile item structures, this is pure Python — typed, testable, and sovereign.
+### 3. Configure the organism
 
-## Security Model
+```yaml
+# organism.yaml
+organism:
+  name: hello-world
 
-AgentServer's security is **architectural**, not bolted-on:
+listeners:
+  - name: greeter
+    payload_class: myapp.Greeting
+    handler: myapp.handle_greeting
+    description: Greets users by name
 
-### Two Completely Isolated Channels
-- **Main Bus**: Standard `<message>` envelope, all traffic undergoes identical validation pipeline regardless of source
-- **OOB Channel**: Privileged commands only, different schema, localhost-bound, used for structural changes
+  - name: output
+    payload_class: myapp.GreetingReply
+    handler: myapp.print_output
+    description: Prints output
+```
 
-### Handler Isolation & Trust Boundary
-**Handlers are untrusted code.** Even compromised handlers cannot:
-- Forge their identity (sender name captured in coroutine scope before execution)
-- Escape thread context (thread UUID captured in coroutine, not handler output)
-- Route to arbitrary targets (routing computed from peers list, not handler claims)
-- Access other threads' data (opaque UUIDs, private path registry)
-- Discover topology (only declared peers visible)
+### 4. Run it
 
-The message pump maintains authoritative metadata in coroutine scope and **never trusts handler output** for security-critical properties.
+```python
+import asyncio
+from xml_pipeline.message_bus import bootstrap
 
-### Closed-Loop Validation
-ALL messages on the main bus undergo identical security processing:
-- External ingress: WSS → pipeline → validation
-- Handler outputs: bytes → pipeline → validation (same steps!)
-- Error messages: generated → pipeline → validation
-- System notifications: generated → pipeline → validation
+async def main():
+    pump = await bootstrap("organism.yaml")
+    await pump.run()
 
-No fast-path bypasses. No "trusted internal" messages. Everything validates.
+asyncio.run(main())
+```
 
-### Topology Privacy
-- Agents see only opaque thread UUIDs, never hierarchical paths
-- Private path registry (UUID → `agent.tool.subtool`) maintained by system
-- Peers list enforces capability boundaries (no ambient authority)
-- Federation gateways are opaque abstractions
+## Console Example
 
-### Anti-Paperclip Architecture
-- Threads are ephemeral (complete audit trail, then deleted)
-- No persistent cross-thread memory primitives
-- Token budgets enforce computational bounds
-- Thread pruning prevents state accumulation
-- All reasoning visible in message history
+Try the interactive console example:
 
-This architecture ensures:<br>
-✅ No privilege escalation (handlers can't forge privileged commands)<br>
-✅ No fast-path bypasses (even system-generated messages validate)<br>
-✅ Physical separation (privileged and regular traffic cannot mix)<br>
-✅ Capability-safe handlers (compromised code still bounded by peers list)<br>
-✅ Complete auditability (thread history is ground truth)
+```bash
+pip install xml-pipeline[console]
+python -m examples.console
+```
 
+```
+> @greeter Alice
+[greeter] Hello, Alice! Welcome to xml-pipeline.
+
+> @echo Hello world
+[echo] Hello world
+
+> /quit
+```
+
+See [examples/console/](examples/console/) for the full source.
 
 ## Key Features
-### 1. The Autonomous Schema Layer
-- Dataclass → cached XSD + example + rich tool prompt (mandatory description + field docs).
-- Namespaces: `https://xml-pipeline.org/ns/<category>/<name>/v1` (served live via domain for discoverability).
-- Multiple listeners per root tag supported (broadcast parallelism).
 
-### 2. Thread-Based Lifecycle & Reasoning
-- Opaque `<thread/>` UUIDs with private hierarchical path registry for reliable subthreading, audit trails, and topology privacy.
-- LLM agents use unique root tags for blind self-iteration (no name knowledge or `<to/>` needed).
-- Agents reason via open self-calls, multi-payload parallelism, and optional `<todo-until/>` scaffolding in visible text.
-- All thought steps visible as messages — no hidden state.
+### Typed Message Passing
 
-### 3. Message Pump
-- Parallel preprocessing pipelines (one per listener) with central async pump orchestration.
-- True concurrency: pipeline tasks parallel, broadcast handlers via asyncio.gather.
-- Single linear flow per pipeline with repair, C14N, XSD validation, deserialization, handler execution, and multi-payload extraction.
-- Supports clean tools, forgiving LLM streams, and natural broadcast alike.
-- Thread-based message queue with bounded memory and fair scheduling.
+Payloads are Python dataclasses with automatic XSD generation:
 
-### 4. Structural Control
-- Bootstrap from `organism.yaml` (including unique root enforcement for agents).
-- Runtime changes (hot-reload, add/remove listeners) via local-only OOB channel (localhost WSS or Unix socket — GUI-ready).
-- Main bus oblivious to privileged ops.
+```python
+@xmlify
+@dataclass
+class Calculate:
+    expression: str
+    precision: int = 2
+```
 
-### 5. Federation & Introspection
-- YAML-declared gateways with trusted keys.
-- Controlled meta queries (schema/example/prompt/capability list).
+The library auto-generates:
+- XSD schema for validation
+- Example XML for documentation
+- Usage instructions for LLM prompts
 
-## Technical Stack
-- **Validation & Parsing:** lxml (XSD, C14N, repair) + xmlable (round-trip).
-- **Protocol:** Mandatory WSS (TLS) + TOTP on main port.
-- **Identity:** Ed25519 (signing, federation, privileged).
-- **Format:** Exclusive C14N XML (wire sovereign).
+### LLM Router
 
-## Why This Matters
-AgentServer v2.1 is a bounded, auditable, owner-controlled organism where the **XSD is the security**, the **private thread registry is the memory**, and the **OOB channel is the sovereignty**.
+Multi-backend LLM support with failover:
 
-One port. Many bounded minds. Autonomous yet obedient evolution. 🚀
+```yaml
+llm:
+  strategy: failover
+  backends:
+    - provider: anthropic
+      api_key_env: ANTHROPIC_API_KEY
+    - provider: openai
+      api_key_env: OPENAI_API_KEY
+```
+
+```python
+from xml_pipeline.llm import complete
+
+response = await complete(
+    model="claude-sonnet-4",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+### Handler Security
+
+Handlers are sandboxed. They cannot:
+- Forge sender identity (injected by pump)
+- Escape thread context (managed by registry)
+- Route to undeclared peers (validated against config)
+- Access other threads (opaque UUIDs)
+
+### Conversation Memory
+
+Thread-scoped context buffer tracks message history:
+
+```python
+from xml_pipeline.memory import get_context_buffer
+
+buffer = get_context_buffer()
+history = buffer.get_thread(metadata.thread_id)
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         StreamPump                               │
+│  • Parallel pipelines per listener                               │
+│  • Repair → C14N → Validate → Deserialize → Route → Dispatch    │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                          Handlers                                │
+│  • Receive typed payload + metadata                              │
+│  • Return HandlerResponse or None                                │
+│  • Cannot forge identity or escape thread                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+See [docs/core-principles-v2.1.md](docs/core-principles-v2.1.md) for the full architecture.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Core Principles](docs/core-principles-v2.1.md) | Architecture overview |
+| [Handler Contract](docs/handler-contract-v2.1.md) | How to write handlers |
+| [Message Pump](docs/message-pump-v2.1.md) | Pipeline processing |
+| [LLM Router](docs/llm-router-v2.1.md) | Multi-backend LLM support |
+| [Configuration](docs/configuration.md) | organism.yaml reference |
+| [Why Not JSON?](docs/why-not-json.md) | Design rationale |
+
+## Requirements
+
+- Python 3.11+
+- Dependencies: lxml, aiostream, pyyaml, httpx, cryptography
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
 
 ---
+
 *XML wins. Safely. Permanently.*

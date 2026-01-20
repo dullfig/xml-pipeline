@@ -15,7 +15,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "you@example.com"},
+    {name = "xml-pipeline contributors"},
 ]
 keywords = [
     "xml",
@@ -115,11 +115,10 @@ xp = "xml_pipeline.cli:main"  # Short alias
 # PROJECT URLS
 # =============================================================================
 [project.urls]
-Homepage = "https://github.com/yourorg/xml-pipeline"
+Homepage = "https://xml-pipeline.org"
 Documentation = "https://xml-pipeline.org/docs"
-Repository = "https://github.com/yourorg/xml-pipeline"
-Issues = "https://github.com/yourorg/xml-pipeline/issues"
-Changelog = "https://github.com/yourorg/xml-pipeline/blob/main/CHANGELOG.md"
+Repository = "https://git.xml-pipeline.org/dullfig/xml-pipeline"
+Issues = "https://git.xml-pipeline.org/dullfig/xml-pipeline/issues"
 
 # =============================================================================
 # PACKAGE DISCOVERY
