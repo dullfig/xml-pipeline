@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from third_party.xmlable import xmlify
-from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 
 # ============================================================================

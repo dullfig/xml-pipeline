@@ -1,0 +1,42 @@
+# organism.yaml — Example console organism
+#
+# A minimal organism demonstrating basic message routing.
+# No LLM backends required — pure message passing.
+#
+# Message flows:
+#   @greeter Alice  ->  greeter  ->  console-output  ->  (display)
+#   @echo Hello     ->  echo     ->  console-output  ->  (display)
+#
+# Run with:
+#   python -m examples.console
+
+organism:
+  name: console-example
+  port: 8765
+
+# No LLM config needed for this example
+# Uncomment to enable LLM-based agents:
+# llm:
+#   strategy: failover
+#   backends:
+#     - provider: xai
+#       api_key_env: XAI_API_KEY
+
+listeners:
+  # Greeter: receives Greeting, responds with friendly message
+  - name: greeter
+    payload_class: examples.console.handlers.Greeting
+    handler: examples.console.handlers.handle_greeting
+    description: Greets you by name
+
+  # Echo: echoes back whatever you send
+  - name: echo
+    payload_class: examples.console.handlers.Echo
+    handler: examples.console.handlers.handle_echo
+    description: Echoes back your message
+
+  # Console output: terminal handler that prints responses
+  - name: console-output
+    payload_class: examples.console.handlers.ConsoleOutput
+    handler: examples.console.handlers.handle_print
+    description: Prints output to console

@@ -12,7 +12,7 @@ Declare your payload contract as an `@xmlify` dataclass + a pure async handler f
 ```python
 from xmlable import xmlify
 from dataclasses import dataclass
-from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass
@@ -36,7 +36,7 @@ async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> Handler
 # LLM agent example
 async def agent_handler(payload: AgentPayload, metadata: HandlerMetadata) -> HandlerResponse:
     # Build prompt with peer schemas
-    from agentserver.llm import complete
+    from xml_pipeline.llm import complete
 
     response = await complete(
         model="grok-4.1",

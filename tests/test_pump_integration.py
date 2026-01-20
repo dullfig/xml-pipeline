@@ -12,8 +12,8 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from agentserver.message_bus import StreamPump, bootstrap, MessageState
-from agentserver.message_bus.stream_pump import ConfigLoader, ListenerConfig, OrganismConfig, Listener
+from xml_pipeline.message_bus import StreamPump, bootstrap, MessageState
+from xml_pipeline.message_bus.stream_pump import ConfigLoader, ListenerConfig, OrganismConfig, Listener
 from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout
 
 ENVELOPE_NS = "https://xml-pipeline.org/ns/envelope/v1"
@@ -148,7 +148,7 @@ class TestFullPipelineFlow:
         original_handler = pump.listeners["greeter"].handler
 
         # Mock the LLM call since we don't have a real API key in tests
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         mock_response = LLMResponse(
             content="Hello, World!",
@@ -164,7 +164,7 @@ class TestFullPipelineFlow:
 
         pump.listeners["greeter"].handler = tracking_handler
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_response)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_response)):
             # Create and inject a Greeting message
             thread_id = str(uuid.uuid4())
             envelope = make_envelope(
@@ -236,7 +236,7 @@ class TestFullPipelineFlow:
         pump._reinject_responses = capture_reinject
 
         # Mock the LLM call since we don't have a real API key in tests
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         mock_response = LLMResponse(
             content="Hello, Alice!",
@@ -245,7 +245,7 @@ class TestFullPipelineFlow:
             finish_reason="stop",
         )
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_response)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_response)):
             # Inject a Greeting
             thread_id = str(uuid.uuid4())
             envelope = make_envelope(
@@ -403,8 +403,8 @@ class TestThreadRoutingFlow:
         from handlers.console import ConsoleInput, ConsolePrompt, ShoutedResponse
         from handlers.console import handle_console_input, handle_shouted_response
         from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout
-        from agentserver.llm.backend import LLMResponse
-        from agentserver.message_bus.thread_registry import get_registry
+        from xml_pipeline.llm.backend import LLMResponse
+        from xml_pipeline.message_bus.thread_registry import get_registry
 
         # Create pump with full routing chain (but no console - it blocks on stdin)
         config = OrganismConfig(name="thread-routing-test")
@@ -498,7 +498,7 @@ class TestThreadRoutingFlow:
 
         pump._reinject_responses = capture_reinject
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
             # Inject ConsoleInput (simulating: user typed "@greeter TestUser")
             # Note: xmlify converts field names to PascalCase for XML elements
             thread_id = str(uuid.uuid4())
@@ -573,8 +573,8 @@ class TestThreadRoutingFlow:
         from handlers.console import ConsoleInput, ShoutedResponse
         from handlers.console import handle_console_input, handle_shouted_response
         from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout
-        from agentserver.llm.backend import LLMResponse
-        from agentserver.message_bus.thread_registry import ThreadRegistry
+        from xml_pipeline.llm.backend import LLMResponse
+        from xml_pipeline.message_bus.thread_registry import ThreadRegistry
 
         # Use a fresh registry for this test
         test_registry = ThreadRegistry()
@@ -584,8 +584,8 @@ class TestThreadRoutingFlow:
         pump = StreamPump(config)
 
         # Patch get_registry to use our test registry
-        with patch('agentserver.message_bus.stream_pump.get_registry', return_value=test_registry):
-            with patch('agentserver.message_bus.thread_registry.get_registry', return_value=test_registry):
+        with patch('xml_pipeline.message_bus.stream_pump.get_registry', return_value=test_registry):
+            with patch('xml_pipeline.message_bus.thread_registry.get_registry', return_value=test_registry):
                 # Register handlers
                 pump.register_listener(ListenerConfig(
                     name="console-router",
@@ -650,7 +650,7 @@ class TestThreadRoutingFlow:
                     finish_reason="stop",
                 )
 
-                with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_llm)):
+                with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
                     # Inject initial message
                     thread_id = str(uuid.uuid4())
                     envelope = make_envelope(

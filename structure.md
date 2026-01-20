@@ -1,6 +1,6 @@
 ```
 xml-pipeline/
-├── agentserver/
+├── xml_pipeline/
 │   ├── auth/
 │   │   ├── __init__.py
 │   │   └── totp.py
@@ -47,7 +47,7 @@ xml-pipeline/
 │   │   ├── __init__.py
 │   │   └── message.py
 │   ├── __init__.py
-│   ├── agentserver.py
+│   ├── xml_pipeline.py
 │   ├── main.py
 │   └── xml_listener.py
 ├── docs/

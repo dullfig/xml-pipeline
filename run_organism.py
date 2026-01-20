@@ -22,8 +22,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from agentserver.message_bus import bootstrap
-from agentserver.console.console_registry import set_console
+from xml_pipeline.message_bus import bootstrap
+from xml_pipeline.console.console_registry import set_console
 
 
 async def run_organism(config_path: str = "config/organism.yaml", use_simple: bool = False):
@@ -34,7 +34,7 @@ async def run_organism(config_path: str = "config/organism.yaml", use_simple: bo
 
     if use_simple:
         # Use old SecureConsole for compatibility
-        from agentserver.console import SecureConsole
+        from xml_pipeline.console import SecureConsole
         console = SecureConsole(pump)
         if not await console.authenticate():
             print("Authentication failed.")
@@ -54,7 +54,7 @@ async def run_organism(config_path: str = "config/organism.yaml", use_simple: bo
         print("Goodbye!")
     else:
         # Use new TUI console
-        from agentserver.console.tui_console import TUIConsole
+        from xml_pipeline.console.tui_console import TUIConsole
         console = TUIConsole(pump)
         set_console(console)  # Register for handlers to find
 

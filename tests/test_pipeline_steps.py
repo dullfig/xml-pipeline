@@ -16,14 +16,14 @@ from dataclasses import dataclass
 from lxml import etree
 
 # Import the message state
-from agentserver.message_bus.message_state import MessageState, HandlerMetadata
+from xml_pipeline.message_bus.message_state import MessageState, HandlerMetadata
 
 # Import individual steps
-from agentserver.message_bus.steps.repair import repair_step
-from agentserver.message_bus.steps.c14n import c14n_step
-from agentserver.message_bus.steps.envelope_validation import envelope_validation_step
-from agentserver.message_bus.steps.payload_extraction import payload_extraction_step
-from agentserver.message_bus.steps.thread_assignment import thread_assignment_step
+from xml_pipeline.message_bus.steps.repair import repair_step
+from xml_pipeline.message_bus.steps.c14n import c14n_step
+from xml_pipeline.message_bus.steps.envelope_validation import envelope_validation_step
+from xml_pipeline.message_bus.steps.payload_extraction import payload_extraction_step
+from xml_pipeline.message_bus.steps.thread_assignment import thread_assignment_step
 
 # Check for optional dependencies
 try:
@@ -39,8 +39,8 @@ requires_aiostream = pytest.mark.skipif(
 
 # Check for stream_pump dependencies
 try:
-    from agentserver.message_bus.stream_pump import StreamPump, Listener
-    from agentserver.message_bus.steps.routing_resolution import make_routing_step
+    from xml_pipeline.message_bus.stream_pump import StreamPump, Listener
+    from xml_pipeline.message_bus.steps.routing_resolution import make_routing_step
     HAS_STREAM_PUMP = True
 except ImportError:
     HAS_STREAM_PUMP = False
@@ -434,7 +434,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_single_payload_yields_one(self):
         """Single payload should yield one state."""
-        from agentserver.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.stream_pump import extract_payloads
 
         state = MessageState(
             raw_bytes=b"<result>42</result>",
@@ -452,7 +452,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_multiple_payloads_yields_many(self, multi_payload_response):
         """Multiple payloads should yield multiple states."""
-        from agentserver.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.stream_pump import extract_payloads
 
         state = MessageState(
             raw_bytes=multi_payload_response,
@@ -471,7 +471,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_empty_response_yields_original(self):
         """Empty response should yield original state."""
-        from agentserver.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.stream_pump import extract_payloads
 
         state = MessageState(
             raw_bytes=b"",
@@ -487,7 +487,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_preserves_metadata(self):
         """Extracted payloads should preserve metadata."""
-        from agentserver.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.stream_pump import extract_payloads
 
         state = MessageState(
             raw_bytes=b"<a/><b/>",
@@ -537,8 +537,8 @@ class TestStepFactories:
     @pytest.mark.asyncio
     async def test_routing_factory(self):
         """Routing step should use injected routing table."""
-        from agentserver.message_bus.steps.routing_resolution import make_routing_step
-        from agentserver.message_bus.stream_pump import Listener
+        from xml_pipeline.message_bus.steps.routing_resolution import make_routing_step
+        from xml_pipeline.message_bus.stream_pump import Listener
 
         # Create mock listener
         mock_listener = Listener(

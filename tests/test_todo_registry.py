@@ -13,10 +13,10 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from agentserver.message_bus.todo_registry import TodoRegistry, TodoWatcher, get_todo_registry
-from agentserver.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
-from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
-from agentserver.primitives.todo import (
+from xml_pipeline.message_bus.todo_registry import TodoRegistry, TodoWatcher, get_todo_registry
+from xml_pipeline.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.primitives.todo import (
     TodoUntil, TodoComplete, TodoRegistered, TodoClosed,
     handle_todo_until, handle_todo_complete,
 )
@@ -278,7 +278,7 @@ class TestTodoIntegration:
     async def test_todo_nudge_appears_in_metadata(self):
         """Raised eyebrows should appear in handler metadata."""
         from handlers.hello import Greeting, GreetingResponse, handle_greeting
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         # Clear registries
         todo_registry = get_todo_registry()
@@ -325,7 +325,7 @@ class TestTodoIntegration:
         pump.listeners["greeter"].handler = capturing_handler
 
         # Create and inject a message
-        from agentserver.message_bus.message_state import MessageState
+        from xml_pipeline.message_bus.message_state import MessageState
 
         state = MessageState(
             payload=Greeting(name="Test"),
@@ -383,7 +383,7 @@ class TestTodoIntegration:
         assert watcher.eyebrow_raised is False
 
         # Dispatch a ShoutedResponse message
-        from agentserver.message_bus.message_state import MessageState
+        from xml_pipeline.message_bus.message_state import MessageState
 
         state = MessageState(
             payload=ShoutedResponse(message="HELLO!"),
@@ -411,7 +411,7 @@ class TestGreeterTodoFlow:
         """
         from handlers.hello import Greeting, GreetingResponse, handle_greeting
         from handlers.console import ShoutedResponse
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         # Clear registry
         todo_registry = get_todo_registry()
@@ -427,7 +427,7 @@ class TestGreeterTodoFlow:
             finish_reason="stop",
         )
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
             # Call greeter handler
             metadata = HandlerMetadata(
                 thread_id=thread_id,
@@ -466,7 +466,7 @@ class TestGreeterTodoFlow:
         When greeter is called again with raised todos, it should close them.
         """
         from handlers.hello import Greeting, GreetingResponse, handle_greeting
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         # Clear registry
         todo_registry = get_todo_registry()
@@ -497,7 +497,7 @@ class TestGreeterTodoFlow:
         raised = todo_registry.get_raised_for(thread_id, "greeter")
         nudge = todo_registry.format_nudge(raised)
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
             # Call greeter with the nudge
             metadata = HandlerMetadata(
                 thread_id=thread_id,

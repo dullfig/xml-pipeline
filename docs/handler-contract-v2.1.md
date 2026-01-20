@@ -68,6 +68,7 @@ class HandlerMetadata:
     own_name: str | None = None     # This listener's name (only if agent: true)
     is_self_call: bool = False      # True if message is from self
     usage_instructions: str = ""    # Auto-generated peer schemas for LLM prompts
+    todo_nudge: str = ""            # System note about pending/raised todos
 ```
 
 ### Field Rationale
@@ -79,6 +80,42 @@ class HandlerMetadata:
 | `own_name` | Enables self-referential reasoning. Only populated for `agent: true` listeners. |
 | `is_self_call` | Detect self-messages (e.g., `<todo-until>` loops). |
 | `usage_instructions` | Auto-generated from peer schemas. Inject into LLM system prompt. |
+| `todo_nudge` | System-generated reminder about pending todos. See Todo Registry below. |
+
+### Todo Nudge (for LLM Agents)
+
+The `todo_nudge` field is populated by the pump when an agent has raised "eyebrows" —
+registered watchers from `TodoUntil` that have received matching responses.
+
+**How it works:**
+1. Agent registers a todo watcher via `TodoUntil` primitive
+2. When expected response arrives, the watcher is "raised" (condition met)
+3. On next handler call to that agent, `todo_nudge` contains a reminder
+4. Agent should check `todo_nudge` and close completed todos
+
+**Example nudge content:**
+```
+SYSTEM NOTE: The following todos appear complete and should be closed:
+- watcher_id: abc123 (registered for: calculator.add response)
+Call todo_registry.close(watcher_id) to acknowledge.
+```
+
+**Usage in handler:**
+```python
+async def agent_handler(payload, metadata: HandlerMetadata) -> HandlerResponse:
+    # Check for completed todos
+    if metadata.todo_nudge:
+        # Parse and close completed watchers
+        todo_registry = get_todo_registry()
+        raised = todo_registry.get_raised_for(metadata.thread_id, metadata.own_name)
+        for watcher in raised:
+            todo_registry.close(watcher.watcher_id)
+
+    # Continue with normal handler logic...
+```
+
+**Note:** This is an internal mechanism for LLM agent task tracking. Most handlers
+can ignore this field. If empty, there are no pending todo notifications.
 
 ## Security Model
 
@@ -155,7 +192,7 @@ async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> Handler
 
 ```python
 async def research_handler(payload: ResearchPayload, metadata: HandlerMetadata) -> HandlerResponse:
-    from agentserver.llm import complete
+    from xml_pipeline.llm import complete
 
     # Build prompt with peer awareness
     system_prompt = metadata.usage_instructions + "\n\nYou are a research agent."

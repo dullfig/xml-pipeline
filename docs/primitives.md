@@ -40,6 +40,104 @@ return None
 - Chain ends here
 - Thread can be cleaned up
 
+## Thread Lifecycle & Pruning
+
+Threads represent call chains through the system. The thread registry maps opaque UUIDs
+to actual paths like `console.router.greeter.calculator`.
+
+### Thread Creation
+
+Threads are created when:
+1. **External message arrives** — Console or WebSocket sends a message
+2. **Handler forwards to peer** — `HandlerResponse(to="peer")` extends the chain
+
+```
+Console sends @greeter hello
+  → Thread created: "system.organism.console.greeter"
+  → UUID: 550e8400-e29b-41d4-...
+
+Greeter forwards to shouter
+  → Chain extended: "system.organism.console.greeter.shouter"
+  → New UUID: 6ba7b810-9dad-...
+```
+
+### Thread Pruning (Critical)
+
+Pruning happens when a handler returns `.respond()`:
+
+```python
+# In calculator handler
+return HandlerResponse.respond(payload=ResultPayload(value=42))
+```
+
+**What happens:**
+1. Registry looks up current chain: `console.router.greeter.calculator`
+2. Prunes last segment: → `console.router.greeter`
+3. Identifies target (new tail): `greeter`
+4. Creates/reuses UUID for pruned chain
+5. Routes response to `greeter` with the pruned thread
+
+**Visual:**
+```
+Before pruning:
+  console → router → greeter → calculator
+                               ↑ (current)
+
+After .respond():
+  console → router → greeter
+                     ↑ (response delivered here)
+```
+
+### What Gets Cleaned Up
+
+When a thread is pruned or terminated:
+
+| Resource | Cleanup Behavior |
+|----------|------------------|
+| Thread UUID mapping | Removed from registry |
+| Context buffer slots | Slots for that thread are deleted |
+| In-flight messages | Completed or dropped (no orphans) |
+| Sub-thread branches | Automatically pruned (cascading) |
+
+**Important:** Sub-threads spawned by a responding handler are effectively orphaned.
+If `greeter` spawned `calculator` and `summarizer`, then responds to `router`, both
+`calculator` and `summarizer` branches become unreachable.
+
+### When Cleanup Happens
+
+| Event | Cleanup |
+|-------|---------|
+| `.respond()` | Current UUID cleaned; pruned chain used |
+| `return None` | Thread terminates; UUID can be cleaned |
+| Chain exhausted | Root reached; entire chain cleaned |
+| Idle timeout | (Future) Stale threads garbage collected |
+
+### Thread Privacy
+
+Handlers only see opaque UUIDs via `metadata.thread_id`. They never see:
+- The actual call chain (`console.router.greeter`)
+- Other thread UUIDs
+- The thread registry
+
+This prevents topology probing. Even if a handler is compromised, it cannot:
+- Discover who called it (beyond `from_id` = immediate caller)
+- Map the organism's structure
+- Forge thread IDs to access other conversations
+
+### Debugging Threads
+
+For debugging, the registry provides `debug_dump()`:
+
+```python
+from xml_pipeline.message_bus.thread_registry import get_registry
+
+registry = get_registry()
+chains = registry.debug_dump()
+# {'550e8400...': 'console.router.greeter', ...}
+```
+
+**Note:** This is for operator debugging only, never exposed to handlers.
+
 ## System Messages
 
 These payload elements are emitted by the system (pump) only. Agents cannot emit them.

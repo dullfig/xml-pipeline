@@ -95,32 +95,60 @@ Pipelines run concurrently; messages within a single pipeline are processed sequ
 
 ---
 
-### Handler Response Processing (hard-coded path)
+### Handler Response Processing (v2.1 Pattern)
 
-After dispatcher awaits a handler:
+Handlers return `HandlerResponse` dataclass (not raw bytes). After dispatcher awaits a handler:
 
 ```python
-response_bytes = await handler(state.payload, metadata)
+from xml_pipeline.message_bus.message_state import HandlerResponse
 
-# Safety guard
-if response_bytes is None or not isinstance(response_bytes, bytes):
-    response_bytes = b"<huh>Handler failed to return valid bytes — likely missing return or wrong type</huh>"
+# Dispatch to handler
+response = await handler(state.payload, metadata)
 
-# Dedicated multi-payload extraction (hard-coded, tolerant)
-payloads_bytes_list = await multi_payload_extract(response_bytes)
+# Process response
+if response is None:
+    # Handler terminates chain — no message emitted
+    return
 
-for payload_bytes in payloads_bytes_list:
-    # Create fresh initial state for each emitted payload
-    new_state = MessageState(
-        raw_bytes=payload_bytes,
-        thread_id=state.thread_id,                    # inherited
-        from_id=current_listener.name,                # provenance injection
-    )
-    # Route through normal pipeline resolution (root tag lookup)
-    await route_and_process(new_state)
+if not isinstance(response, HandlerResponse):
+    # Legacy bytes return (deprecated) or invalid — emit error
+    await emit_system_error(state, "Handler must return HandlerResponse or None")
+    return
+
+# Determine routing based on response type
+if response.is_response:
+    # .respond() was used — route back to caller via thread registry
+    target, new_thread = thread_registry.prune_for_response(state.thread_id)
+else:
+    # Forward to named target
+    target = response.to
+    new_thread = thread_registry.extend_chain(state.thread_id, target)
+
+    # Peer constraint enforcement (agents only)
+    if listener.is_agent and listener.peers:
+        if target not in listener.peers:
+            await emit_system_error(state, "Routing error")
+            return
+
+# Serialize payload to XML
+payload_bytes = xmlify_serialize(response.payload)
+
+# Create fresh state for the new message
+new_state = MessageState(
+    raw_bytes=payload_bytes,
+    thread_id=new_thread,
+    from_id=current_listener.name,  # Pump injects identity, never handler
+)
+
+# Re-inject into pipeline for validation and routing
+await route_and_process(new_state)
 ```
 
-`multi_payload_extract` wraps in `<dummy>` (idempotent), repairs/parses, extracts all root elements, returns list of bytes. If none found → single diagnostic `<huh>`.
+**Key security properties:**
+- `<from>` always injected from `current_listener.name` (coroutine-captured)
+- `<thread>` always from thread registry (never handler output)
+- `<to>` validated against peers list for agents
+- Handlers cannot forge identity, escape threads, or bypass peer constraints
 
 ---
 
@@ -165,10 +193,12 @@ async def dispatcher(state: MessageState):
 1. One dedicated pipeline per registered listener + permanent system pipeline.
 2. Pipelines are ordered lists of async steps operating on universal `MessageState`.
 3. Routing resolution is a normal pipeline step → dispatcher receives pre-routed targets.
-4. Handler responses go through hard-coded multi-payload extraction → each payload becomes fresh `MessageState` routed normally.
+4. Handlers return `HandlerResponse` (or `None` to terminate) → pump wraps payload in envelope and re-injects.
 5. Provenance (`<from>`) and thread continuity injected by pump, never by handlers.
-6. `<huh>` guards protect against missing returns and step failures.
-7. Extensibility: new steps (token counting, rate limiting, logging) insert anywhere in default list.
+6. Peer constraints enforced by pump — agents can only send to declared peers.
+7. Thread registry manages call chains — `.respond()` prunes, forward extends.
+8. `<huh>` guards protect against step failures; `<SystemError>` for routing violations.
+9. Extensibility: new steps (token counting, rate limiting, logging) insert anywhere in default list.
 
 ---
 

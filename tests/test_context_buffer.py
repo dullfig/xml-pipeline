@@ -13,7 +13,7 @@ import pytest
 import uuid
 from dataclasses import dataclass, FrozenInstanceError
 
-from agentserver.memory.context_buffer import (
+from xml_pipeline.memory.context_buffer import (
     ContextBuffer,
     ThreadContext,
     BufferSlot,
@@ -329,9 +329,9 @@ class TestPumpIntegration:
     async def test_buffer_records_messages_during_flow(self):
         """Context buffer should record messages as they flow through pump."""
         from unittest.mock import AsyncMock, patch
-        from agentserver.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
-        from agentserver.message_bus.message_state import HandlerResponse
-        from agentserver.llm.backend import LLMResponse
+        from xml_pipeline.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
+        from xml_pipeline.message_bus.message_state import HandlerResponse
+        from xml_pipeline.llm.backend import LLMResponse
 
         # Import handlers
         from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout
@@ -378,7 +378,7 @@ class TestPumpIntegration:
             pass
         pump._reinject_responses = noop_reinject
 
-        with patch('agentserver.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
             # Create envelope for Greeting
             thread_id = str(uuid.uuid4())
             envelope = f"""<message xmlns="https://xml-pipeline.org/ns/envelope/v1">

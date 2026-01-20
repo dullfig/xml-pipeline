@@ -26,7 +26,7 @@ Usage in organism.yaml:
 from dataclasses import dataclass
 
 from third_party.xmlable import xmlify
-from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 
 @xmlify
@@ -67,8 +67,8 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
     The system prompt is managed by the platform (from organism.yaml).
     The handler cannot see or modify the prompt.
     """
-    from agentserver.platform import complete
-    from agentserver.message_bus.todo_registry import get_todo_registry
+    from xml_pipeline.platform import complete
+    from xml_pipeline.message_bus.todo_registry import get_todo_registry
 
     # Check for any raised todos and close them
     todo_registry = get_todo_registry()
@@ -126,7 +126,7 @@ async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetad
 
     Routes output to the TUI console if available, otherwise prints to stdout.
     """
-    from agentserver.console.console_registry import get_console
+    from xml_pipeline.console.console_registry import get_console
 
     console = get_console()
 

@@ -43,7 +43,7 @@ The LLM router provides a unified interface for LLM calls. Agents simply request
 ### Simple Call
 
 ```python
-from agentserver.llm import complete
+from xml_pipeline.llm import complete
 
 response = await complete(
     model="grok-4.1",
@@ -71,7 +71,7 @@ response = await complete(
 
 ```python
 async def research_handler(payload: ResearchPayload, metadata: HandlerMetadata) -> HandlerResponse:
-    from agentserver.llm import complete
+    from xml_pipeline.llm import complete
 
     response = await complete(
         model="grok-4.1",
@@ -233,7 +233,7 @@ except BackendError as e:
 The router tracks tokens per agent for budgeting and monitoring:
 
 ```python
-from agentserver.llm.router import get_router
+from xml_pipeline.llm.router import get_router
 
 router = get_router()
 

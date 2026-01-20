@@ -1,118 +1,199 @@
-# pyproject.toml
+# pyproject.toml — OSS xml-pipeline library
+#
+# This is the open-source core: message pump, handlers, LLM abstraction, tools.
+# Advanced features (TUI console, LSP, auth, WebSocket server) are in Nextra.
+
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "xml-pipeline"
-version = "0.2.0"
-description = "Tamper-proof nervous system for multi-agent organisms"
+version = "0.3.0"
+description = "Schema-driven XML message bus for multi-agent systems"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
-keywords = ["xml", "multi-agent", "message-bus", "aiostream"]
+authors = [
+    {name = "Your Name", email = "you@example.com"},
+]
+keywords = [
+    "xml",
+    "multi-agent",
+    "message-bus",
+    "llm",
+    "pipeline",
+    "async",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: AsyncIO",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
 ]
 
 # =============================================================================
-# CORE DEPENDENCIES - minimal, always installed
+# CORE DEPENDENCIES — minimal set for the library
 # =============================================================================
 dependencies = [
-    # XML processing
-    "lxml",
-    # Async streaming
+    # XML processing & validation
+    "lxml>=4.9",
+
+    # Async streaming pipeline
     "aiostream>=0.5",
-    # Config & serialization
-    "pyyaml",
-    "pyhumps",
-    # Crypto (for identity keys)
-    "cryptography",
-    # Console
-    "prompt_toolkit>=3.0",
-    "termcolor",
+
+    # Configuration
+    "pyyaml>=6.0",
+
+    # Case conversion (snake_case <-> camelCase)
+    "pyhumps>=3.0",
+
+    # Ed25519 identity keys for signing
+    "cryptography>=41.0",
+
     # HTTP client for LLM backends
     "httpx>=0.27",
+
+    # Colored terminal output (minimal, no TUI)
+    "termcolor>=2.0",
 ]
 
 # =============================================================================
-# OPTIONAL DEPENDENCIES - user opts into what they need
+# OPTIONAL DEPENDENCIES — user opts in
 # =============================================================================
 [project.optional-dependencies]
 
-# LLM provider SDKs (alternative to raw httpx)
+# LLM provider SDKs (alternative to raw httpx calls)
 anthropic = ["anthropic>=0.39"]
 openai = ["openai>=1.0"]
 
 # Tool backends
-redis = ["redis>=5.0"]           # For distributed keyvalue
-search = ["duckduckgo-search"]   # For search tool
+redis = ["redis>=5.0"]              # Distributed key-value store
+search = ["duckduckgo-search>=6.0"] # Web search tool
 
-# Auth (only for multi-tenant/remote deployments)
-auth = [
-    "pyotp",                      # TOTP for privileged channel
-    "argon2-cffi",                # Password hashing
-]
+# Console example (optional, for interactive use)
+console = ["prompt_toolkit>=3.0"]
 
-# WebSocket server (for remote connections)
-server = ["websockets"]
+# All LLM providers
+llm = ["xml-pipeline[anthropic,openai]"]
 
-# LSP support for config editor (requires yaml-language-server: npm install -g yaml-language-server)
-lsp = ["lsp-client>=0.3.0"]
+# All tools
+tools = ["xml-pipeline[redis,search]"]
 
-# All optional features
-all = [
-    "xml-pipeline[anthropic,openai,redis,search,auth,server,lsp]",
-]
+# Everything (for local development)
+all = ["xml-pipeline[llm,tools,console]"]
 
-# Development
+# Testing
 test = [
     "pytest>=7.0",
-    "pytest-asyncio>=0.21",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
 ]
+
+# Development (linting, type checking)
 dev = [
     "xml-pipeline[test,all]",
-    "mypy",
-    "ruff",
+    "mypy>=1.8",
+    "ruff>=0.1",
+    "types-PyYAML",
 ]
 
 # =============================================================================
 # CLI ENTRY POINTS
 # =============================================================================
 [project.scripts]
-xml-pipeline = "agentserver.cli:main"
-xp = "agentserver.cli:main"
+xml-pipeline = "xml_pipeline.cli:main"
+xp = "xml_pipeline.cli:main"  # Short alias
 
 # =============================================================================
-# TOOL CONFIGURATION
+# PROJECT URLS
+# =============================================================================
+[project.urls]
+Homepage = "https://github.com/yourorg/xml-pipeline"
+Documentation = "https://xml-pipeline.org/docs"
+Repository = "https://github.com/yourorg/xml-pipeline"
+Issues = "https://github.com/yourorg/xml-pipeline/issues"
+Changelog = "https://github.com/yourorg/xml-pipeline/blob/main/CHANGELOG.md"
+
+# =============================================================================
+# PACKAGE DISCOVERY
+# =============================================================================
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "xml_pipeline*",
+    "third_party*",
+    "examples*",
+]
+exclude = [
+    "tests*",
+    "docs*",
+]
+
+[tool.setuptools.package-data]
+xml_pipeline = [
+    "schema/*.xsd",
+    "prompts/*.txt",
+]
+
+# =============================================================================
+# PYTEST
 # =============================================================================
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-norecursedirs = [".git", "__pycache__", "*.egg-info"]
+norecursedirs = [".git", "__pycache__", "*.egg-info", "build", "dist"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests requiring external services",
+]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["agentserver*", "third_party*"]
-
+# =============================================================================
+# RUFF (linting)
+# =============================================================================
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # function call in default argument
+]
 
+[tool.ruff.lint.isort]
+known-first-party = ["xml_pipeline", "third_party"]
+
+# =============================================================================
+# MYPY (type checking)
+# =============================================================================
 [tool.mypy]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_ignores = true
 disallow_untyped_defs = true
+strict_optional = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "third_party.*"
+ignore_errors = true

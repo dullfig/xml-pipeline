@@ -1,11 +1,23 @@
 # Secure Console Design — v3.0
 
-**Status:** Design Draft
+**Status:** Design Draft (Partially Implemented)
 **Date:** January 2026
+
+> **Implementation Note:** This document describes the *target design* for v3.0. The current
+> implementation has the console working with password authentication and most commands, but
+> the OOB network port has **not yet been removed**. See `configuration.md` for current OOB
+> configuration. Full keyboard-only mode is planned for a future release.
 
 ## Overview
 
-The console becomes the **sole privileged interface** to the organism. OOB channel is eliminated as a network port — privileged operations are only accessible via local keyboard input.
+The console becomes the **sole privileged interface** to the organism. In the target design, the OOB channel is eliminated as a network port — privileged operations are only accessible via local keyboard input.
+
+**Current State (v2.1):**
+- Console with password protection: ✅ Implemented
+- `/config`, `/status`, `/listeners` commands: ✅ Implemented
+- `/config -e` editor with LSP support: ✅ Implemented
+- OOB network port removed: ❌ Not yet (still in configuration.md)
+- Keyboard-only privileged ops: ❌ Partial (console commands work, but OOB port still exists)
 
 ## Security Model
 
@@ -197,9 +209,12 @@ class SecureConsole:
         return argon2.verify(self.password_hash, password)
 ```
 
-### OOB Channel Removal
+### OOB Channel Removal (Planned)
 
-The current OOB port in `privileged-msg.xsd` is **removed**. Privileged operations are:
+> **Not Yet Implemented:** The OOB port is still present in v2.1. This section describes
+> the target design where the OOB port is removed.
+
+In the target design, the OOB port in `privileged-msg.xsd` is **removed**. Privileged operations are:
 
 1. Defined as Python methods on `SecureConsole`
 2. Invoked directly via keyboard commands
@@ -289,12 +304,17 @@ Goodbye!
 - [ ] Protected commands require password re-entry
 - [ ] Argon2id for password hashing (memory-hard)
 
-## Migration from v2.x
+## Migration from v2.x (Future)
+
+When the OOB removal is implemented, migration will involve:
 
 1. Remove OOB port configuration from organism.yaml
 2. Remove `privileged-msg.xsd` network handling
 3. First run prompts for password setup
 4. Existing privileged operations become console commands
+
+**Current v2.1:** OOB is still present. Console provides an alternative privileged interface
+but doesn't replace OOB yet.
 
 ## Attach/Detach Model
 

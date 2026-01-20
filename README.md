@@ -22,7 +22,7 @@ See [Core Architectural Principles](docs/core-principles-v2.1.md) for the single
 ## Core Philosophy
 - **Autonomous DNA:** Listeners declare their contract via `@xmlify` dataclasses; the organism auto-generates XSDs, examples, and tool prompts.
 - **Schema-Locked Intelligence:** Payloads validated directly against XSD (lxml) → deserialized to typed instances → pure handlers.
-- **Multi-Response Tolerance:** Handlers return raw bytes; bus wraps in `<dummy></dummy>` and extracts multiple payloads (perfect for parallel tool calls or dirty LLM output).
+- **Multi-Response Tolerance:** Handlers return `HandlerResponse` dataclasses; bus extracts payloads and routes them (perfect for parallel tool calls or multi-step workflows).
 - **Computational Sovereignty:** Turing-complete via blind self-calls, subthreading primitives, concurrent broadcast, and visible reasoning — all bounded by private thread hierarchy and local-only control.
 
 ## Developer Experience — Create a Listener in 12 Lines
@@ -30,9 +30,9 @@ See [Core Architectural Principles](docs/core-principles-v2.1.md) for the single
 Just declare a dataclass contract and a one-line human description. The organism handles validation, XSD, examples, and tool prompts automatically.
 
 ```python
-from xmlable import xmlify
 from dataclasses import dataclass
-from xml_pipeline import Listener, bus  # bus is the global MessageBus
+from third_party.xmlable import xmlify
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass
@@ -40,16 +40,22 @@ class AddPayload:
     a: int
     b: int
 
-def add_handler(payload: AddPayload) -> bytes:
-    result = payload.a + payload.b
-    return f"<result>{result}</result>".encode("utf-8")
+@xmlify
+@dataclass
+class ResultPayload:
+    value: int
 
-Listener(
-    payload_class=AddPayload,
-    handler=add_handler,
-    name="calculator.add",
-    description="Adds two integers and returns their sum."
-).register()  # ← Boom: XSD, example, prompt auto-generated + registered
+async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> HandlerResponse:
+    """Handlers MUST be async and return HandlerResponse."""
+    result = payload.a + payload.b
+    return HandlerResponse.respond(payload=ResultPayload(value=result))
+
+# In organism.yaml:
+# listeners:
+#   - name: calculator.add
+#     payload_class: mymodule.AddPayload
+#     handler: mymodule.add_handler
+#     description: "Adds two integers and returns their sum."
 ```
 
 The organism now speaks `<add>` — fully validated, typed, and discoverable.<br/>

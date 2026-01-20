@@ -74,7 +74,7 @@ Optional flags:
 ```python
 from xmlable import xmlify
 from dataclasses import dataclass
-from agentserver.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass

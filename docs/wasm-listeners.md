@@ -119,7 +119,7 @@ asc calculator.ts -o calculator.wasm --optimize
 
 ```python
 # Pseudocode
-from agentserver.wasm import register_wasm_listener
+from xml_pipeline.wasm import register_wasm_listener
 
 register_wasm_listener(
     name="calculator",

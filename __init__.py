@@ -7,7 +7,7 @@ Secure, XML-centric multi-listener organism server.
 Stream-based message pump with aiostream for fan-out handling.
 """
 
-from agentserver.message_bus import (
+from xml_pipeline.message_bus import (
     StreamPump,
     ConfigLoader,
     Listener,
