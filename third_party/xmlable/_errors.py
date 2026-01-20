@@ -7,12 +7,11 @@ Colourful & descriptive errors for xmlable
 from dataclasses import dataclass
 from typing import Any, Iterable
 from termcolor import colored
-from termcolor.termcolor import Color
 
 from ._utils import typename, AnyType
 
 
-def trace_note(trace: list[str], arrow_c: Color, node_c: Color):
+def trace_note(trace: list[str], arrow_c: str, node_c: str):
     return colored(" > ", arrow_c).join(
         map(lambda x: colored(x, node_c), trace)
     )
