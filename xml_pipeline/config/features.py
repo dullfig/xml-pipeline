@@ -16,14 +16,13 @@ def _check_import(module: str) -> bool:
 
 
 # Feature registry: feature_name -> (check_function, description)
+# Note: auth, server, lsp moved to Nextra (proprietary)
 FEATURES: dict[str, tuple[Callable[[], bool], str]] = {
     "anthropic": (lambda: _check_import("anthropic"), "Anthropic Claude SDK"),
     "openai": (lambda: _check_import("openai"), "OpenAI SDK"),
     "redis": (lambda: _check_import("redis"), "Redis for distributed keyvalue"),
     "search": (lambda: _check_import("duckduckgo_search"), "DuckDuckGo search"),
-    "auth": (lambda: _check_import("pyotp") and _check_import("argon2"), "TOTP auth"),
-    "server": (lambda: _check_import("websockets"), "WebSocket server"),
-    "lsp": (lambda: _check_import("lsp_client"), "LSP client for config editor"),
+    "console": (lambda: _check_import("prompt_toolkit"), "Interactive console example"),
 }
 
 
@@ -80,15 +79,7 @@ def check_features(config) -> FeatureCheck:
         # This would need more sophisticated detection based on tool config
         pass
 
-    # Check if auth is needed (multi-tenant mode)
-    if getattr(config, "auth", None):
-        if not result.available.get("auth"):
-            result.missing["auth"] = "Config has auth enabled"
-
-    # Check if websocket server is needed
-    if getattr(config, "server", None):
-        if not result.available.get("server"):
-            result.missing["server"] = "Config has server enabled"
+    # Note: auth/server config sections are read but implemented in Nextra
 
     return result
 
