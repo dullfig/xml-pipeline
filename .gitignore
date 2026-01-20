@@ -13,14 +13,17 @@ ENV/
 .env
 .env.local
 .env.*.local
-agentserver/config/organism_identity/private.pem
-agentserver/config/*.signed.xml
+xml_pipeline/config/organism_identity/private.pem
+xml_pipeline/config/*.signed.xml
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+
+# Claude Code
+.claude/
 
 # OS
 Thumbs.db
