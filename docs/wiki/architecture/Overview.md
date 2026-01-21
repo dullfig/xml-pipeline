@@ -223,7 +223,7 @@ For CPU-bound handlers:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Main Process (StreamPump)                                       │
+│  Main Process (StreamPump)                                      │
 │  - Ingress pipeline                                             │
 │  - Routing decisions                                            │
 │  - Response re-injection                                        │
@@ -240,7 +240,7 @@ For CPU-bound handlers:
          └─────────────────┼──────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Shared Backend (Redis / Manager / Memory)                       │
+│  Shared Backend (Redis / Manager / Memory)                      │
 │  - Context buffer slots                                         │
 │  - Thread registry mappings                                     │
 └─────────────────────────────────────────────────────────────────┘

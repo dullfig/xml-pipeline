@@ -6,17 +6,17 @@ The LLM Router provides a unified interface for language model calls. Agents req
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Agent Handler                             │
+│                        Agent Handler                            │
 │   response = await complete("grok-4.1", messages)               │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                         LLM Router                               │
-│  • Find backends serving model                                   │
-│  • Select backend (strategy)                                     │
-│  • Retry on failure                                              │
-│  • Track usage per agent                                         │
+│                         LLM Router                              │
+│  • Find backends serving model                                  │
+│  • Select backend (strategy)                                    │
+│  • Retry on failure                                             │
+│  • Track usage per agent                                        │
 └────────────┬────────────────┬────────────────┬──────────────────┘
              │                │                │
              ▼                ▼                ▼
