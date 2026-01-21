@@ -124,14 +124,6 @@ async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetad
     """
     Print the final response to the console.
 
-    Routes output to the TUI console if available, otherwise prints to stdout.
+    Note: TUI console is available in Nextra. This handler uses simple stdout.
     """
-    from xml_pipeline.console.console_registry import get_console
-
-    console = get_console()
-
-    if console is not None and hasattr(console, 'on_response'):
-        console.on_response("shouter", payload)
-    else:
-        # Fallback for simple mode or no console
-        print(f"\033[36m[response] {payload.message}\033[0m")
+    print(f"\033[36m[response] {payload.message}\033[0m")

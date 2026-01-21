@@ -2,7 +2,7 @@
 
 A tamper-proof nervous system for multi-agent AI systems using XML as the sovereign wire format. AgentServer provides a schema-driven, Turing-complete message bus where agents communicate through validated XML payloads, with automatic XSD generation, handler isolation, and built-in security guarantees against agent misbehavior.
 
-**Version:** 0.2.0
+**Version:** 0.4.0
 
 ## Tech Stack
 
@@ -14,9 +14,10 @@ A tamper-proof nervous system for multi-agent AI systems using XML as the sovere
 | Serialization | xmlable | vendored | Dataclass ↔ XML round-trip with auto-XSD |
 | Config | PyYAML | Latest | Organism configuration (organism.yaml) |
 | Crypto | cryptography | Latest | Ed25519 identity keys for signing |
-| Console | prompt_toolkit | 3.0+ | Interactive TUI console |
 | HTTP | httpx | 0.27+ | LLM backend communication |
 | Case conversion | pyhumps | Latest | Snake/camel case conversion |
+
+> **Note:** TUI console, authentication, and WebSocket server are available in the Nextra SaaS product.
 
 ## Quick Start
 
@@ -38,18 +39,18 @@ pip install -e ".[all]"
 # Or minimal install + specific features
 pip install -e "."                    # Core only
 pip install -e ".[anthropic]"         # + Anthropic SDK
-pip install -e ".[server]"            # + WebSocket server
 
 # Configure environment
 cp .env.example .env
 # Edit .env to add your API keys (XAI_API_KEY, ANTHROPIC_API_KEY, etc.)
 
 # Run the organism
-python run_organism.py config/organism.yaml
-
-# Or use CLI
 xml-pipeline run config/organism.yaml
 xp run config/organism.yaml  # Short alias
+
+# Try the console example
+pip install -e ".[console]"
+python -m examples.console
 
 # Run tests
 pip install -e ".[test]"
@@ -61,9 +62,7 @@ pytest tests/ -v
 ```
 xml-pipeline/
 ├── xml_pipeline/              # Main package
-│   ├── auth/                 # Authentication (TOTP, sessions, users)
 │   ├── config/               # Config loading and templates
-│   ├── console/              # TUI console and secure console
 │   ├── listeners/            # Listener implementations and examples
 │   ├── llm/                  # LLM router, backends, token bucket
 │   ├── memory/               # Context buffer for conversation history
@@ -77,20 +76,20 @@ xml-pipeline/
 │   ├── primitives/           # System message types (Boot, TodoUntil, etc.)
 │   ├── prompts/              # System prompts (no_paperclippers, etc.)
 │   ├── schema/               # XSD schema files
-│   ├── server/               # HTTP/WebSocket server
 │   ├── tools/                # Native tools (files, shell, search, etc.)
 │   └── utils/                # Shared utilities
 ├── config/                   # Example organism configurations
 ├── docs/                     # Architecture and design docs
-├── examples/                 # Example MCP servers and integrations
+├── examples/                 # Example console and integrations
 ├── handlers/                 # Example message handlers
 ├── tests/                    # pytest test suite
 ├── third_party/              # Vendored dependencies
 │   └── xmlable/              # XML serialization library
-├── pyproject.toml            # Project metadata and dependencies
-├── run_organism.py           # Main entry point with TUI
-└── organism.yaml             # Default organism config (if present)
+└── pyproject.toml            # Project metadata and dependencies
 ```
+
+> **Note:** Authentication (`auth/`), TUI console (`console/`), and WebSocket server (`server/`)
+> are available in the Nextra SaaS product.
 
 ## Architecture Overview
 
@@ -192,8 +191,7 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
 | `xml-pipeline check [config]` | Validate config without running |
 | `xml-pipeline version` | Show version and installed features |
 | `xp run [config]` | Short alias for xml-pipeline run |
-| `python run_organism.py [config]` | Run with TUI console |
-| `python run_organism.py --simple [config]` | Run with simple console |
+| `python -m examples.console` | Run interactive console example |
 | `pytest tests/ -v` | Run test suite |
 | `pytest tests/test_pipeline_steps.py -v` | Run specific test file |
 
@@ -304,9 +302,8 @@ pip install xml-pipeline[openai]      # OpenAI SDK
 pip install xml-pipeline[redis]       # Distributed key-value store
 pip install xml-pipeline[search]      # DuckDuckGo search
 
-# Server features
-pip install xml-pipeline[auth]        # TOTP + Argon2 authentication
-pip install xml-pipeline[server]      # WebSocket server
+# Console example
+pip install xml-pipeline[console]     # prompt_toolkit for examples
 
 # Everything
 pip install xml-pipeline[all]
@@ -314,6 +311,8 @@ pip install xml-pipeline[all]
 # Development (includes all + mypy + ruff)
 pip install xml-pipeline[dev]
 ```
+
+> **Note:** Authentication and WebSocket server features are available in the Nextra SaaS product.
 
 ## Native Tools
 
@@ -348,14 +347,14 @@ Built-in message types in `xml_pipeline/primitives/`:
 - @docs/message-pump-v2.1.md — Message pump implementation details
 - @docs/handler-contract-v2.1.md — Handler interface specification
 - @docs/llm-router-v2.1.md — LLM backend abstraction
-- @docs/secure-console-v3.md — Console and authentication
 - @docs/platform-architecture.md — Platform-level APIs
 - @docs/native_tools.md — Native tool implementations
 - @docs/primitives.md — System primitives reference (includes thread lifecycle)
 - @docs/configuration.md — Organism configuration reference
-- @docs/lsp-integration.md — LSP editor support for YAML and AssemblyScript
 - @docs/split-config.md — Split configuration architecture
 - @docs/why-not-json.md — Rationale for XML over JSON
+
+> **Note:** Console, authentication, and LSP integration documentation is in the Nextra project.
 
 
 ## Skill Usage Guide
@@ -370,7 +369,6 @@ When working on tasks involving these technologies, invoke the corresponding ski
 | cryptography | Implements Ed25519 identity keys for signing and federation auth |
 | httpx | Handles async HTTP requests for LLM backend communication |
 | aiostream | Implements stream-based message pipeline with concurrent fan-out processing |
-| prompt-toolkit | Builds interactive TUI console with password input and command history |
 | lxml | Handles XML processing, XSD validation, C14N normalization, and repair |
 | python | Manages async-first Python 3.11+ codebase with type hints and dataclasses |
 | pytest | Runs async test suite with pytest-asyncio fixtures and markers |

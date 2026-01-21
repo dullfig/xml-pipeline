@@ -1,93 +1,58 @@
 #!/usr/bin/env python3
 """
-run_organism.py — Start the organism with TUI console.
+run_organism.py — Deprecated entry point.
 
-Usage:
-    python run_organism.py [config.yaml]
-    python run_organism.py --simple [config.yaml]  # Use simple console
+The TUI console and server have been moved to the Nextra SaaS product.
+This file is kept for backwards compatibility but will display a helpful message.
 
-This boots the organism with a split-screen terminal UI:
-- Scrolling output area above
-- Status bar separator
-- Input area below
+For the open-source xml-pipeline, use the CLI or programmatic API:
 
-Flow:
-  1. Bootstrap organism
-  2. Start pump in background
-  3. Run TUI console
-  4. /quit shuts down gracefully
+    # CLI
+    xml-pipeline run config/organism.yaml
+
+    # Programmatic
+    from xml_pipeline.message_bus import bootstrap
+    pump = await bootstrap("organism.yaml")
+    await pump.run()
+
+    # Interactive console example
+    pip install xml-pipeline[console]
+    python -m examples.console
+
+For the full TUI console with authentication and WebSocket server,
+see the Nextra project.
 """
 
-import asyncio
 import sys
-from pathlib import Path
-
-from xml_pipeline.message_bus import bootstrap
-from xml_pipeline.console.console_registry import set_console
 
 
-async def run_organism(config_path: str = "config/organism.yaml", use_simple: bool = False):
-    """Boot organism with TUI console."""
+def main() -> None:
+    """Show deprecation message and exit."""
+    print("""
+xml-pipeline: TUI Console Moved to Nextra
+==========================================
 
-    # Bootstrap the pump
-    pump = await bootstrap(config_path)
+The interactive TUI console with authentication and WebSocket server
+has been moved to the Nextra SaaS product (v0.4.0).
 
-    if use_simple:
-        # Use old SecureConsole for compatibility
-        from xml_pipeline.console import SecureConsole
-        console = SecureConsole(pump)
-        if not await console.authenticate():
-            print("Authentication failed.")
-            return
-        set_console(None)
+For the open-source xml-pipeline, use:
 
-        pump_task = asyncio.create_task(pump.run())
-        try:
-            await console.run_command_loop()
-        finally:
-            pump_task.cancel()
-            try:
-                await pump_task
-            except asyncio.CancelledError:
-                pass
-            await pump.shutdown()
-        print("Goodbye!")
-    else:
-        # Use new TUI console
-        from xml_pipeline.console.tui_console import TUIConsole
-        console = TUIConsole(pump)
-        set_console(console)  # Register for handlers to find
+  1. CLI command:
+     xml-pipeline run config/organism.yaml
 
-        # Start pump in background
-        pump_task = asyncio.create_task(pump.run())
+  2. Programmatic API:
+     from xml_pipeline.message_bus import bootstrap
+     pump = await bootstrap("organism.yaml")
+     await pump.run()
 
-        try:
-            await console.run()
-        finally:
-            pump_task.cancel()
-            try:
-                await pump_task
-            except asyncio.CancelledError:
-                pass
-            await pump.shutdown()
+  3. Console example (for testing):
+     pip install xml-pipeline[console]
+     python -m examples.console
 
-
-def main():
-    args = sys.argv[1:]
-    use_simple = "--simple" in args
-    if use_simple:
-        args.remove("--simple")
-
-    config_path = args[0] if args else "config/organism.yaml"
-
-    if not Path(config_path).exists():
-        print(f"Config not found: {config_path}")
-        sys.exit(1)
-
-    try:
-        asyncio.run(run_organism(config_path, use_simple=use_simple))
-    except KeyboardInterrupt:
-        print("\nInterrupted")
+For full TUI console, authentication, and WebSocket server features,
+see the Nextra project.
+""")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

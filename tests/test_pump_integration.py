@@ -147,15 +147,8 @@ class TestFullPipelineFlow:
         handler_calls = []
         original_handler = pump.listeners["greeter"].handler
 
-        # Mock the LLM call since we don't have a real API key in tests
-        from xml_pipeline.llm.backend import LLMResponse
-
-        mock_response = LLMResponse(
-            content="Hello, World!",
-            model="mock",
-            usage={"total_tokens": 10},
-            finish_reason="stop",
-        )
+        # Mock platform.complete since handle_greeting uses platform API
+        mock_response = "Hello, World!"
 
         async def tracking_handler(payload, metadata):
             handler_calls.append((payload, metadata))
@@ -164,7 +157,7 @@ class TestFullPipelineFlow:
 
         pump.listeners["greeter"].handler = tracking_handler
 
-        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_response)):
+        with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
             # Create and inject a Greeting message
             thread_id = str(uuid.uuid4())
             envelope = make_envelope(
@@ -235,17 +228,10 @@ class TestFullPipelineFlow:
 
         pump._reinject_responses = capture_reinject
 
-        # Mock the LLM call since we don't have a real API key in tests
-        from xml_pipeline.llm.backend import LLMResponse
+        # Mock platform.complete since handle_greeting uses platform API (not llm directly)
+        mock_response = "Hello, Alice!"
 
-        mock_response = LLMResponse(
-            content="Hello, Alice!",
-            model="mock",
-            usage={"total_tokens": 10},
-            finish_reason="stop",
-        )
-
-        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_response)):
+        with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
             # Inject a Greeting
             thread_id = str(uuid.uuid4())
             envelope = make_envelope(
@@ -479,13 +465,8 @@ class TestThreadRoutingFlow:
         pump.listeners["shouter"].handler = trace_shouter
         pump.listeners["response-handler"].handler = trace_response
 
-        # Mock LLM response
-        mock_llm = LLMResponse(
-            content="Hello there, friend!",
-            model="mock",
-            usage={"total_tokens": 10},
-            finish_reason="stop",
-        )
+        # Mock platform.complete since handle_greeting uses platform API
+        mock_response = "Hello there, friend!"
 
         # Capture final output (response-handler sends to console, but console isn't registered)
         final_outputs = []
@@ -498,7 +479,7 @@ class TestThreadRoutingFlow:
 
         pump._reinject_responses = capture_reinject
 
-        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
             # Inject ConsoleInput (simulating: user typed "@greeter TestUser")
             # Note: xmlify converts field names to PascalCase for XML elements
             thread_id = str(uuid.uuid4())
@@ -642,15 +623,10 @@ class TestThreadRoutingFlow:
                     pass
                 pump._reinject_responses = noop_reinject
 
-                # Mock LLM
-                mock_llm = LLMResponse(
-                    content="Hello!",
-                    model="mock",
-                    usage={"total_tokens": 5},
-                    finish_reason="stop",
-                )
+                # Mock platform.complete since handle_greeting uses platform API
+                mock_response = "Hello!"
 
-                with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
+                with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
                     # Inject initial message
                     thread_id = str(uuid.uuid4())
                     envelope = make_envelope(

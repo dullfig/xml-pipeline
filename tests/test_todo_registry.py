@@ -411,7 +411,6 @@ class TestGreeterTodoFlow:
         """
         from handlers.hello import Greeting, GreetingResponse, handle_greeting
         from handlers.console import ShoutedResponse
-        from xml_pipeline.llm.backend import LLMResponse
 
         # Clear registry
         todo_registry = get_todo_registry()
@@ -419,15 +418,10 @@ class TestGreeterTodoFlow:
 
         thread_id = str(uuid.uuid4())
 
-        # Mock LLM
-        mock_llm = LLMResponse(
-            content="Hello there!",
-            model="mock",
-            usage={"total_tokens": 5},
-            finish_reason="stop",
-        )
+        # Mock platform.complete (not llm.complete) since handle_greeting uses platform API
+        mock_response = "Hello there!"
 
-        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
             # Call greeter handler
             metadata = HandlerMetadata(
                 thread_id=thread_id,
@@ -466,7 +460,6 @@ class TestGreeterTodoFlow:
         When greeter is called again with raised todos, it should close them.
         """
         from handlers.hello import Greeting, GreetingResponse, handle_greeting
-        from xml_pipeline.llm.backend import LLMResponse
 
         # Clear registry
         todo_registry = get_todo_registry()
@@ -485,19 +478,14 @@ class TestGreeterTodoFlow:
         # Verify eyebrow is raised
         assert todo_registry._by_id[watcher_id].eyebrow_raised is True
 
-        # Mock LLM
-        mock_llm = LLMResponse(
-            content="Hello again!",
-            model="mock",
-            usage={"total_tokens": 5},
-            finish_reason="stop",
-        )
+        # Mock platform.complete (not llm.complete) since handle_greeting uses platform API
+        mock_response = "Hello again!"
 
         # Format the nudge as the pump would
         raised = todo_registry.get_raised_for(thread_id, "greeter")
         nudge = todo_registry.format_nudge(raised)
 
-        with patch('xml_pipeline.llm.complete', new=AsyncMock(return_value=mock_llm)):
+        with patch('xml_pipeline.platform.complete', new=AsyncMock(return_value=mock_response)):
             # Call greeter with the nudge
             metadata = HandlerMetadata(
                 thread_id=thread_id,

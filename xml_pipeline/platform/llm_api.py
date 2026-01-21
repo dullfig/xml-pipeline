@@ -99,7 +99,8 @@ async def complete(
         context_buffer = get_context_buffer()
         history = context_buffer.get_thread(thread_id)
 
-        for slot in history:
+        # get_thread returns None if thread doesn't exist yet
+        for slot in history or []:
             # Determine role: assistant if from this agent, user otherwise
             role = "assistant" if slot.from_id == agent_name else "user"
 
