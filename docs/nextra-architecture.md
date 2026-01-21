@@ -219,6 +219,58 @@ User writes code in Monaco (TypeScript mode)
 | Output | 📤 Box | Terminal handler |
 | Loop | ↻ Arrow back | Self-iteration |
 
+#### Flow Lifecycle Controls
+
+Simple two-state model: **Stopped** ↔ **Running**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Flow States                               │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│   ┌──────────┐    [▶ Run]     ┌──────────┐                 │
+│   │ Stopped  │ ─────────────▶ │ Running  │                 │
+│   │          │ ◀───────────── │          │                 │
+│   └──────────┘    [■ Stop]    └──────────┘                 │
+│        │                            │                        │
+│        │ Edit allowed               │ Edit blocked          │
+│        │ Triggers ignored           │ Triggers processed    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**UI Controls:**
+```
+[▶ Run]  [■ Stop]  [Save]     ← Action bar
+```
+
+**State Transitions:**
+
+| Action | From | To | Behavior |
+|--------|------|----|----------|
+| Run | Stopped | Running | Start pump container, enable triggers |
+| Stop | Running | Stopped | Kill container, lose in-flight threads |
+| Save | Stopped | Stopped | Persist YAML to database |
+| Save | Running | — | Blocked (must stop first) |
+
+**Why no Pause?**
+- Simpler state machine
+- Matches user expectations (Zapier, n8n, Make all work this way)
+- Flows should be stateless — restart is safe:
+  - Webhooks retry automatically (HTTP behavior)
+  - Schedules catch next tick
+  - Project memory (Pro) survives restart
+
+**Why no Hot Edit?**
+- Modifying a swarm mid-execution risks undefined behavior
+- Agent could be mid-reasoning when peers list changes
+- Stop → Edit → Start is safer and predictable
+
+**Future consideration (Pro):** Graceful Stop
+- Stop accepting new triggers
+- Wait up to N seconds for in-flight threads to complete
+- Force-stop after timeout
+
 ### Control Plane (FastAPI on Render)
 
 #### Tech Stack
@@ -782,6 +834,7 @@ Paid tier flows:
 | Frontend Framework | Next.js | v0 generates it, Vercel hosts it |
 | Canvas Library | React Flow | Most popular, good docs, n8n uses it |
 | Code Editor | Monaco (TS mode) | No LSP server needed; asc compiler catches AS errors |
+| Flow Controls | Run/Stop only | No pause, no hot-edit; stateless flows, safe restarts |
 | Control Plane | FastAPI | Matches xml-pipeline, async-native |
 | Database | PostgreSQL | Render managed, reliable |
 | Cache/Pubsub | Redis | Already needed for xml-pipeline shared backend |
