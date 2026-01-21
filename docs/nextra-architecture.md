@@ -128,9 +128,46 @@ Nextra is a SaaS platform for building AI agent workflows using the xml-pipeline
 - **UI Generation:** Vercel v0
 - **Components:** shadcn/ui + Tailwind CSS
 - **Flow Canvas:** React Flow (Xyflow)
-- **Code Editor:** Monaco Editor
+- **Code Editor:** Monaco Editor (TypeScript mode)
 - **State:** Zustand or Jotai
 - **API Client:** tRPC or React Query
+
+#### Code Editor Architecture (Pro+ WASM)
+
+AssemblyScript editing uses Monaco's built-in TypeScript language service — no separate
+language server required. Since AssemblyScript is a strict TypeScript subset, this provides:
+
+- Syntax highlighting
+- Autocomplete / IntelliSense
+- Type checking
+- Error diagnostics
+
+The AssemblyScript type definitions (`.d.ts`) are loaded into Monaco at startup.
+
+```
+User writes code in Monaco (TypeScript mode)
+         │
+         ▼
+    Real-time feedback from TS language service
+    (syntax, types, autocomplete)
+         │
+         ▼
+    User clicks "Build" / "Deploy"
+         │
+         ▼
+    Backend runs `asc` compiler
+         │
+         ├── Success → .wasm file stored, module registered
+         │
+         └── Errors → Returned to UI with line numbers
+                      (Monaco shows error markers)
+```
+
+**Why no AssemblyScript Language Server (asls)?**
+- Monaco TypeScript covers 90%+ of editing needs
+- The `asc` compiler catches AS-specific errors accurately at build time
+- Eliminates $7+/month infrastructure cost
+- Zero cold-start latency (runs in browser)
 
 #### Key Pages
 
@@ -744,6 +781,7 @@ Paid tier flows:
 |----------|--------|-----------|
 | Frontend Framework | Next.js | v0 generates it, Vercel hosts it |
 | Canvas Library | React Flow | Most popular, good docs, n8n uses it |
+| Code Editor | Monaco (TS mode) | No LSP server needed; asc compiler catches AS errors |
 | Control Plane | FastAPI | Matches xml-pipeline, async-native |
 | Database | PostgreSQL | Render managed, reliable |
 | Cache/Pubsub | Redis | Already needed for xml-pipeline shared backend |
