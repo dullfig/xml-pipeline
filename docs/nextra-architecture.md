@@ -774,6 +774,136 @@ Paid tier flows:
 
 ---
 
+## AI Flow Builder Assistant
+
+The platform includes an AI assistant that helps users create flows from natural language
+descriptions. The key insight: **the assistant is itself a flow running on Nextra**.
+
+### Architecture (Dogfooding)
+
+```
+User: "I want a flow that monitors my website and alerts me on Slack"
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  flow-builder (system flow, runs on Nextra)                     │
+│                                                                  │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
+│  │   builder   │ ───▶ │  catalog    │      │  examples   │     │
+│  │   (agent)   │ ───▶ │  (tool)     │      │  (tool)     │     │
+│  │             │ ───▶ │             │      │             │     │
+│  │             │      └─────────────┘      └─────────────┘     │
+│  │             │                                                │
+│  │             │      ┌─────────────┐      ┌─────────────┐     │
+│  │             │ ───▶ │  validator  │ ───▶ │  responder  │     │
+│  │             │      │  (tool)     │      │  (output)   │     │
+│  └─────────────┘      └─────────────┘      └─────────────┘     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+    Returns generated organism.yaml to UI
+```
+
+### Tools Available to Builder Agent
+
+| Tool | Purpose |
+|------|---------|
+| `catalog` | List available nodes (built-in + user's marketplace + custom WASM) |
+| `validator` | Check if generated YAML is valid against schema |
+| `examples` | Search marketplace for similar flows as few-shot examples |
+| `user-modules` | List user's custom WASM modules (Pro) |
+
+### Flow Definition
+
+```yaml
+# The AI assistant is itself a flow!
+organism:
+  name: flow-builder-assistant
+
+listeners:
+  - name: builder
+    agent: true
+    prompt: |
+      You help users create Nextra flows from natural language.
+
+      Process:
+      1. Call catalog to see available nodes
+      2. Call examples to find similar flows
+      3. Generate organism.yaml
+      4. Call validator to check your work
+      5. Fix any errors and re-validate
+      6. Return final YAML via responder
+
+      Rules:
+      - Every flow needs at least one trigger
+      - Agents can only call declared peers
+      - WASM code blocks require Pro tier
+    peers:
+      - catalog
+      - validator
+      - examples
+      - user-modules
+      - responder
+
+  - name: catalog
+    handler: nextra.builtin.catalog.list_nodes
+    description: "Returns available node types with schemas"
+
+  - name: validator
+    handler: nextra.builtin.validator.check_yaml
+    description: "Validates organism.yaml, returns errors if invalid"
+
+  - name: examples
+    handler: nextra.builtin.examples.search
+    description: "Search marketplace for example flows"
+
+  - name: user-modules
+    handler: nextra.builtin.modules.list_user
+    description: "List user's custom WASM modules"
+
+  - name: responder
+    handler: nextra.builtin.respond.to_ui
+    description: "Return result to the UI"
+```
+
+### Benefits of This Approach
+
+| Benefit | Why It Matters |
+|---------|----------------|
+| **No special infrastructure** | Same StreamPump, same handlers, same security |
+| **Always accurate catalog** | Queries real available nodes, not static list |
+| **Self-validating** | Checks its own work before returning |
+| **Learns from marketplace** | Uses community flows as few-shot examples |
+| **Same billing** | Just LLM tokens like any agent flow |
+| **Customizable (Pro)** | Users could fork and customize the builder |
+
+### Implementation Phases
+
+**Phase 1:** System prompt + validator tool
+- Bake common nodes into prompt
+- Validate before returning
+- 10-20 curated example flows
+
+**Phase 2:** Dynamic catalog
+- `catalog` tool queries user's actual available nodes
+- Marketplace examples as RAG source
+
+**Phase 3:** Learning loop
+- Track AI-generated → user-edited corrections
+- Use as fine-tuning signal or RAG pairs
+
+### Content Strategy
+
+Documentation becomes training data:
+- Every doc page = context the AI can reference
+- Every marketplace flow = few-shot example
+- JSON Schema = ground truth for validation
+
+Good docs help humans AND train the AI — double value.
+
+---
+
 ## Implementation Phases
 
 ### Phase 1: MVP (4-6 weeks)
@@ -807,6 +937,14 @@ Paid tier flows:
 - [ ] Browse/search/install
 - [ ] Ratings/reviews
 
+### Phase 4.5: AI Flow Builder (2-4 weeks)
+
+- [ ] Builder agent flow (system prompt + tools)
+- [ ] Catalog tool (list available nodes)
+- [ ] Validator tool (check YAML)
+- [ ] Examples tool (search marketplace)
+- [ ] UI integration ("Help me build" button)
+
 ### Phase 5: Enterprise (TBD)
 
 - [ ] Team/org management
@@ -835,6 +973,7 @@ Paid tier flows:
 | Canvas Library | React Flow | Most popular, good docs, n8n uses it |
 | Code Editor | Monaco (TS mode) | No LSP server needed; asc compiler catches AS errors |
 | Flow Controls | Run/Stop only | No pause, no hot-edit; stateless flows, safe restarts |
+| AI Assistant | Self-hosted flow | Dogfooding: builder is a flow with catalog/validator tools |
 | Control Plane | FastAPI | Matches xml-pipeline, async-native |
 | Database | PostgreSQL | Render managed, reliable |
 | Cache/Pubsub | Redis | Already needed for xml-pipeline shared backend |
