@@ -169,6 +169,50 @@ User writes code in Monaco (TypeScript mode)
 - Eliminates $7+/month infrastructure cost
 - Zero cold-start latency (runs in browser)
 
+#### AI-Assisted WASM Coding (Pro)
+
+The Monaco editor includes AI assistance for writing AssemblyScript — like Claude Code,
+but for WASM tools.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Monaco Editor (Pro WASM Tab)                                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  // User types or asks:                                         │
+│  // "Help me write a function that parses CSV"                  │
+│                                                                  │
+│  export function parseCSV(input: string): string[][] {          │
+│    █                                                            │
+│    ← AI suggests completion here                                │
+│  }                                                               │
+│                                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  [💬 Ask AI]  [▶ Build]  [Save]                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Two modes:**
+
+| Mode | UX | Like |
+|------|-----|------|
+| Inline completion | Tab to accept suggestions | GitHub Copilot |
+| Chat panel | "Write a JSON validator" → generates code | Claude Code |
+
+**Implementation:**
+- Frontend calls Claude/GPT API directly (no backend round-trip needed)
+- Context includes: AssemblyScript types, WIT interface, user's code
+- Suggestions inserted into Monaco editor
+
+**Why AI-assisted (not autonomous):**
+- Human reviews code before building
+- User learns AssemblyScript over time
+- Debugging is tractable
+- No surprise compute costs
+- WASM sandbox is safe, but user oversight builds trust
+
+Ships with Phase 3 (Monaco integration) — just an API call from the browser.
+
 #### Key Pages
 
 | Route | Purpose |
