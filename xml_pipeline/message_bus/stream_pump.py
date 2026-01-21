@@ -9,12 +9,21 @@ The pipeline is just a composition of stream operators.
 
 Dependencies:
     pip install aiostream
+
+CPU-Bound Handlers:
+    Handlers marked with `cpu_bound: true` are dispatched to a
+    ProcessPoolExecutor instead of running in the main event loop.
+    This prevents long-running handlers from blocking other messages.
+
+    Requires shared backend (Redis or Manager) for cross-process data access.
 """
 
 from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterable, Callable, List, Dict, Any, Optional
@@ -34,6 +43,8 @@ from xml_pipeline.message_bus.thread_registry import get_registry
 from xml_pipeline.message_bus.todo_registry import get_todo_registry
 from xml_pipeline.memory import get_context_buffer
 
+pump_logger = logging.getLogger(__name__)
+
 
 # ============================================================================
 # Configuration (same as before)
@@ -49,6 +60,7 @@ class ListenerConfig:
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
     prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
+    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
 
@@ -69,6 +81,16 @@ class OrganismConfig:
     # LLM configuration (optional)
     llm_config: Dict[str, Any] = field(default_factory=dict)
 
+    # Process pool configuration (for cpu_bound handlers)
+    process_pool_workers: int = 4
+    process_pool_max_tasks_per_child: int = 100
+    process_pool_enabled: bool = False
+
+    # Backend configuration (for shared state)
+    backend_type: str = "memory"  # "memory", "manager", "redis"
+    backend_redis_url: str = "redis://localhost:6379"
+    backend_redis_prefix: str = "xp:"
+
 
 @dataclass
 class Listener:
@@ -79,6 +101,8 @@ class Listener:
     is_agent: bool = False
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
+    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
+    handler_path: str = ""  # Import path for worker process
     schema: etree.XMLSchema = field(default=None, repr=False)
     root_tag: str = ""
     usage_instructions: str = ""  # Generated at registration for LLM agents
@@ -170,6 +194,10 @@ class StreamPump:
 
     The entire flow is a single composable stream pipeline.
     Fan-out is natural via flatmap. Concurrency is controlled via task_limit.
+
+    CPU-bound handlers can be dispatched to a ProcessPoolExecutor by
+    marking them with `cpu_bound: true` in config. This requires a
+    shared backend (Redis or Manager) for cross-process data access.
     """
 
     def __init__(self, config: OrganismConfig):
@@ -188,6 +216,29 @@ class StreamPump:
         # Shutdown control
         self._running = False
 
+        # Process pool for cpu_bound handlers
+        self._process_pool: Optional[ProcessPoolExecutor] = None
+        if config.process_pool_enabled:
+            self._process_pool = ProcessPoolExecutor(
+                max_workers=config.process_pool_workers,
+                max_tasks_per_child=config.process_pool_max_tasks_per_child,
+            )
+            pump_logger.info(
+                f"ProcessPool initialized: {config.process_pool_workers} workers"
+            )
+
+        # Shared backend for cross-process state
+        self._shared_backend = None
+        if config.backend_type != "memory":
+            from xml_pipeline.memory.shared_backend import BackendConfig, get_shared_backend
+            backend_config = BackendConfig(
+                backend_type=config.backend_type,
+                redis_url=config.backend_redis_url,
+                redis_prefix=config.backend_redis_prefix,
+            )
+            self._shared_backend = get_shared_backend(backend_config)
+            pump_logger.info(f"Shared backend: {config.backend_type}")
+
     # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
@@ -203,6 +254,8 @@ class StreamPump:
             is_agent=lc.is_agent,
             peers=lc.peers,
             broadcast=lc.broadcast,
+            cpu_bound=lc.cpu_bound,
+            handler_path=lc.handler_path,  # For worker process import
             schema=self._generate_schema(lc.payload_class),
             root_tag=root_tag,
         )
@@ -420,7 +473,15 @@ class StreamPump:
                         )
                         payload_ref = state.payload
 
-                    response = await listener.handler(payload_ref, metadata)
+                    # Dispatch to handler - either in-process or via ProcessPool
+                    if listener.cpu_bound and self._process_pool and self._shared_backend:
+                        response = await self._dispatch_to_process_pool(
+                            listener=listener,
+                            payload=payload_ref,
+                            metadata=metadata,
+                        )
+                    else:
+                        response = await listener.handler(payload_ref, metadata)
 
                     # None means "no response needed" - don't re-inject
                     if response is None:
@@ -548,6 +609,94 @@ class StreamPump:
   {payload_str}
 </message>"""
         return envelope.encode('utf-8')
+
+    async def _dispatch_to_process_pool(
+        self,
+        listener: Listener,
+        payload: Any,
+        metadata: HandlerMetadata,
+    ) -> Optional[HandlerResponse]:
+        """
+        Dispatch handler to ProcessPoolExecutor for CPU-bound execution.
+
+        This offloads work to a separate process to avoid blocking
+        the main event loop.
+
+        Args:
+            listener: The target listener
+            payload: The @xmlify dataclass payload
+            metadata: Handler metadata
+
+        Returns:
+            HandlerResponse or None (same as direct handler call)
+        """
+        from xml_pipeline.message_bus.worker import (
+            WorkerTask,
+            store_task_data,
+            fetch_response,
+            cleanup_task_data,
+            execute_handler,
+        )
+
+        assert self._process_pool is not None
+        assert self._shared_backend is not None
+
+        # Store payload and metadata in shared backend
+        payload_uuid, metadata_uuid = store_task_data(
+            self._shared_backend, payload, metadata
+        )
+
+        # Create worker task
+        task = WorkerTask(
+            thread_uuid=metadata.thread_id,
+            payload_uuid=payload_uuid,
+            handler_path=listener.handler_path,
+            metadata_uuid=metadata_uuid,
+            listener_name=listener.name,
+            is_agent=listener.is_agent,
+            peers=list(listener.peers),
+        )
+
+        # Backend config for worker process
+        backend_config = {
+            "backend_type": self.config.backend_type,
+            "redis_url": self.config.backend_redis_url,
+            "redis_prefix": self.config.backend_redis_prefix,
+        }
+
+        try:
+            # Submit to process pool and await result
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self._process_pool,
+                execute_handler,
+                task,
+                backend_config,
+            )
+
+            if not result.success:
+                pump_logger.error(
+                    f"Worker error for {listener.name}: {result.error}"
+                )
+                if result.error_traceback:
+                    pump_logger.debug(f"Traceback: {result.error_traceback}")
+                return None
+
+            # Fetch response from shared backend
+            if result.response_uuid:
+                response = fetch_response(self._shared_backend, result.response_uuid)
+                return response
+
+            return None
+
+        finally:
+            # Clean up task data from backend
+            cleanup_task_data(
+                self._shared_backend,
+                payload_uuid,
+                metadata_uuid,
+                result.response_uuid if 'result' in dir() and result.success else None,
+            )
 
     async def _reinject_responses(self, state: MessageState) -> None:
         """Push handler responses back into the queue for next iteration."""
@@ -714,9 +863,15 @@ class StreamPump:
         await self.queue.put(state)
 
     async def shutdown(self) -> None:
-        """Graceful shutdown — wait for queue to drain."""
+        """Graceful shutdown — wait for queue to drain and close resources."""
         self._running = False
         await self.queue.join()
+
+        # Shutdown process pool if active
+        if self._process_pool:
+            self._process_pool.shutdown(wait=True)
+            pump_logger.info("ProcessPool shutdown complete")
+            self._process_pool = None
 
 
 # ============================================================================
@@ -733,6 +888,19 @@ class ConfigLoader:
     @classmethod
     def _parse(cls, raw: dict) -> OrganismConfig:
         org = raw.get("organism", {})
+
+        # Parse process pool config
+        pool = raw.get("process_pool", {})
+        process_pool_enabled = pool.get("enabled", False) if pool else False
+        process_pool_workers = pool.get("workers", 4) if pool else 4
+        process_pool_max_tasks = pool.get("max_tasks_per_child", 100) if pool else 100
+
+        # Parse backend config
+        backend = raw.get("backend", {})
+        backend_type = backend.get("type", "memory") if backend else "memory"
+        backend_redis_url = backend.get("redis_url", "redis://localhost:6379") if backend else "redis://localhost:6379"
+        backend_redis_prefix = backend.get("redis_prefix", "xp:") if backend else "xp:"
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -742,6 +910,12 @@ class ConfigLoader:
             max_concurrent_handlers=raw.get("max_concurrent_handlers", 20),
             max_concurrent_per_agent=raw.get("max_concurrent_per_agent", 5),
             llm_config=raw.get("llm", {}),
+            process_pool_enabled=process_pool_enabled,
+            process_pool_workers=process_pool_workers,
+            process_pool_max_tasks_per_child=process_pool_max_tasks,
+            backend_type=backend_type,
+            backend_redis_url=backend_redis_url,
+            backend_redis_prefix=backend_redis_prefix,
         )
 
         for entry in raw.get("listeners", []):
@@ -762,6 +936,7 @@ class ConfigLoader:
             peers=raw.get("peers", []),
             broadcast=raw.get("broadcast", False),
             prompt=raw.get("prompt", ""),
+            cpu_bound=raw.get("cpu_bound", False),
         )
 
     @classmethod

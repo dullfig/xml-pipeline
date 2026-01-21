@@ -65,6 +65,9 @@ class ListenerConfig:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
 
+    # Dispatch mode
+    cpu_bound: bool = False  # If True, dispatch to ProcessPoolExecutor
+
 
 @dataclass
 class ServerConfig:
@@ -84,6 +87,42 @@ class AuthConfig:
 
 
 @dataclass
+class BackendStorageConfig:
+    """
+    Shared backend configuration for multi-process deployments.
+
+    Enables ContextBuffer and ThreadRegistry to use shared storage
+    (Redis or multiprocessing.Manager) for cross-process access.
+    """
+
+    backend_type: str = "memory"  # "memory", "manager", "redis"
+
+    # Redis-specific config
+    redis_url: str = "redis://localhost:6379"
+    redis_prefix: str = "xp:"
+    redis_ttl: int = 86400  # 24 hours default TTL
+
+    # Limits
+    max_slots_per_thread: int = 10000
+    max_threads: int = 1000
+
+
+@dataclass
+class ProcessPoolConfig:
+    """
+    Process pool configuration for CPU-bound handler dispatch.
+
+    When configured, handlers marked with `cpu_bound: true` are
+    dispatched to a ProcessPoolExecutor instead of running in
+    the main event loop.
+    """
+
+    enabled: bool = False
+    workers: int = 4  # Number of worker processes
+    max_tasks_per_child: int = 100  # Restart workers after N tasks
+
+
+@dataclass
 class OrganismConfig:
     """Complete organism configuration."""
 
@@ -92,6 +131,8 @@ class OrganismConfig:
     llm_backends: list[LLMBackendConfig] = field(default_factory=list)
     server: ServerConfig | None = None
     auth: AuthConfig | None = None
+    backend: BackendStorageConfig | None = None
+    process_pool: ProcessPoolConfig | None = None
 
 
 def load_config(path: Path) -> OrganismConfig:
@@ -152,6 +193,7 @@ def load_config(path: Path) -> OrganismConfig:
                 peers=listener_raw.get("peers", []),
                 allowed_tools=listener_raw.get("allowed_tools", []),
                 blocked_tools=listener_raw.get("blocked_tools", []),
+                cpu_bound=listener_raw.get("cpu_bound", False),
             )
         )
 
@@ -174,12 +216,37 @@ def load_config(path: Path) -> OrganismConfig:
             totp_secret_env=auth_raw.get("totp_secret_env", "ORGANISM_TOTP_SECRET"),
         )
 
+    # Parse optional backend config
+    backend = None
+    if "backend" in raw:
+        backend_raw = raw["backend"]
+        backend = BackendStorageConfig(
+            backend_type=backend_raw.get("type", "memory"),
+            redis_url=backend_raw.get("redis_url", "redis://localhost:6379"),
+            redis_prefix=backend_raw.get("redis_prefix", "xp:"),
+            redis_ttl=backend_raw.get("redis_ttl", 86400),
+            max_slots_per_thread=backend_raw.get("max_slots_per_thread", 10000),
+            max_threads=backend_raw.get("max_threads", 1000),
+        )
+
+    # Parse optional process pool config
+    process_pool = None
+    if "process_pool" in raw:
+        pool_raw = raw["process_pool"]
+        process_pool = ProcessPoolConfig(
+            enabled=pool_raw.get("enabled", True),
+            workers=pool_raw.get("workers", 4),
+            max_tasks_per_child=pool_raw.get("max_tasks_per_child", 100),
+        )
+
     return OrganismConfig(
         organism=organism,
         listeners=listeners,
         llm_backends=llm_backends,
         server=server,
         auth=auth,
+        backend=backend,
+        process_pool=process_pool,
     )
 
 

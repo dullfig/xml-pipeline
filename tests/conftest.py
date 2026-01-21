@@ -36,6 +36,50 @@ def pytest_configure(config):
 # Fixtures available to all tests
 # ============================================================================
 
+@pytest.fixture(autouse=True)
+def reset_singletons():
+    """Reset global singletons before each test to ensure isolation."""
+    # Clear registries before test
+    try:
+        from xml_pipeline.platform.prompt_registry import get_prompt_registry
+        get_prompt_registry().clear()
+    except ImportError:
+        pass
+
+    try:
+        from xml_pipeline.memory.context_buffer import get_context_buffer
+        get_context_buffer().clear()
+    except ImportError:
+        pass
+
+    try:
+        from xml_pipeline.message_bus.thread_registry import get_registry
+        get_registry().clear()
+    except (ImportError, AttributeError):
+        pass
+
+    yield  # Run the test
+
+    # Clear after test too for good measure
+    try:
+        from xml_pipeline.platform.prompt_registry import get_prompt_registry
+        get_prompt_registry().clear()
+    except ImportError:
+        pass
+
+    try:
+        from xml_pipeline.memory.context_buffer import get_context_buffer
+        get_context_buffer().clear()
+    except ImportError:
+        pass
+
+    try:
+        from xml_pipeline.message_bus.thread_registry import get_registry
+        get_registry().clear()
+    except (ImportError, AttributeError):
+        pass
+
+
 @pytest.fixture
 def sample_thread_id():
     """A valid UUID for testing."""
