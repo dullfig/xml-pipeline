@@ -595,6 +595,87 @@ Custom code runs in WASM, which provides:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### Monitor AI (Shadow Watchdog)
+
+Every flow has an invisible AI watchdog that observes but cannot interfere.
+Agents have no way to detect, probe, or influence the monitor.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     User's Flow                                  │
+│  ┌─────────┐    ┌─────────┐    ┌─────────┐                     │
+│  │ Agent A │───▶│ Agent B │───▶│ Agent C │                     │
+│  └─────────┘    └─────────┘    └─────────┘                     │
+│        │              │              │                          │
+│        └──────────────┼──────────────┘                          │
+│                       ▼                                          │
+│              ┌─────────────────┐                                │
+│              │ Context Buffer  │ (append-only log)              │
+│              └────────┬────────┘                                │
+└───────────────────────│─────────────────────────────────────────┘
+                        │ Read-only tap (invisible to agents)
+                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Monitor AI (Shadow)                           │
+│                                                                  │
+│  Capabilities:                                                   │
+│  ├── READ: All messages in context buffer                       │
+│  ├── ALERT: Email user, UI notification, webhook                │
+│  └── STOP: Trigger flow stop via control plane                  │
+│                                                                  │
+│  Cannot:                                                         │
+│  ├── Emit messages to pipeline                                  │
+│  ├── Modify context buffer                                      │
+│  └── Be detected by agents (no probe surface)                   │
+│                                                                  │
+│  Watches for:                                                    │
+│  ├── Endless loops (repeating message patterns)                 │
+│  ├── Token budget approaching limit                             │
+│  ├── Goal drift (agent pursuing unintended objectives)          │
+│  ├── Prompt injection attempts                                  │
+│  ├── Sandbox escape attempts (probing for filesystem, etc.)    │
+│  └── Anomalous conversation patterns                            │
+│                                                                  │
+│  Runs on: Cheap models (Mistral, Mixtral, Llama)               │
+└─────────────────────────────────────────────────────────────────┘
+                        │
+                        ▼ Out-of-band alerts (not via message bus)
+              ┌─────────────────┐
+              │  Control Plane  │
+              │  • Email user   │
+              │  • UI alert     │
+              │  • Auto-stop    │
+              │  • Audit log    │
+              └─────────────────┘
+```
+
+**Why this architecture:**
+
+| Property | Benefit |
+|----------|---------|
+| **Asymmetric visibility** | Monitor sees agents; agents can't see monitor |
+| **No message bus access** | Can't be poisoned via prompt injection |
+| **Separate trust domain** | Even compromised agents can't disable watchdog |
+| **Out-of-band control** | Stops flows via API, not messages |
+| **Cheap to run** | Mistral/Mixtral at ~$0.0002/1K tokens |
+
+**Alert thresholds (configurable):**
+
+| Condition | Default | Action |
+|-----------|---------|--------|
+| Same message pattern 3x | Warn | UI alert |
+| Same message pattern 5x | Critical | Auto-stop + email |
+| Token usage > 80% budget | Warn | UI alert |
+| Token usage > 95% budget | Critical | Auto-stop |
+| Suspected goal drift | Warn | Flag for review |
+| Escape attempt detected | Critical | Auto-stop + audit log |
+
+**Implementation:**
+- Monitor runs as sidecar process in pump container
+- Subscribes to Redis buffer updates (read-only)
+- Periodically summarizes recent messages and checks patterns
+- Alerts via control plane API (never via message bus)
+
 ---
 
 ## Data Flow Examples
@@ -965,6 +1046,7 @@ Good docs help humans AND train the AI — double value.
 - [ ] Webhook triggers
 - [ ] Execution history
 - [ ] Canvas ↔ YAML sync
+- [ ] Monitor AI (shadow watchdog)
 - [ ] Paid tier + Stripe billing
 
 ### Phase 3: Pro Features (4-6 weeks)
@@ -1018,6 +1100,8 @@ Good docs help humans AND train the AI — double value.
 | Code Editor | Monaco (TS mode) | No LSP server needed; asc compiler catches AS errors |
 | Flow Controls | Run/Stop only | No pause, no hot-edit; stateless flows, safe restarts |
 | AI Assistant | Self-hosted flow | Dogfooding: builder is a flow with catalog/validator tools |
+| Monitor AI | Shadow sidecar | Read-only watchdog; agents can't detect or influence |
+| Monitor Model | Mistral/Mixtral | Cheap (~$0.0002/1K); doesn't need frontier model |
 | Control Plane | FastAPI | Matches xml-pipeline, async-native |
 | Database | PostgreSQL | Render managed, reliable |
 | Cache/Pubsub | Redis | Already needed for xml-pipeline shared backend |
