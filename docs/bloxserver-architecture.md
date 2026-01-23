@@ -1,4 +1,4 @@
-# Nextra SaaS Platform — Architecture Design Document
+# BloxServer SaaS Platform — Architecture Design Document
 
 **Version:** 1.0 (Draft)
 **Date:** January 2026
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Nextra is a SaaS platform for building AI agent workflows using the xml-pipeline library. Users visually design message flows on a canvas, which generates the underlying YAML configuration. Flows run on isolated container instances with support for built-in tools, marketplace components, and custom WASM modules.
+BloxServer is a SaaS platform for building AI agent workflows using the xml-pipeline library. Users visually design message flows on a canvas, which generates the underlying YAML configuration. Flows run on isolated container instances with support for built-in tools, marketplace components, and custom WASM modules.
 
 ### Key Differentiators
 
@@ -821,7 +821,7 @@ Paid tier flows:
 ## AI Flow Builder Assistant
 
 The platform includes an AI assistant that helps users create flows from natural language
-descriptions. The key insight: **the assistant is itself a flow running on Nextra**.
+descriptions. The key insight: **the assistant is itself a flow running on BloxServer**.
 
 ### Architecture (Dogfooding)
 
@@ -830,7 +830,7 @@ User: "I want a flow that monitors my website and alerts me on Slack"
          │
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  flow-builder (system flow, runs on Nextra)                     │
+│  flow-builder (system flow, runs on BloxServer)                     │
 │                                                                  │
 │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
 │  │   builder   │ ───▶ │  catalog    │      │  examples   │     │
@@ -869,7 +869,7 @@ listeners:
   - name: builder
     agent: true
     prompt: |
-      You help users create Nextra flows from natural language.
+      You help users create BloxServer flows from natural language.
 
       Process:
       1. Call catalog to see available nodes

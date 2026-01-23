@@ -1,5 +1,5 @@
 /**
- * Nextra API Contract - TypeScript Types
+ * BloxServer API Contract - TypeScript Types
  *
  * These types define the API contract between frontend and backend.
  * The FastAPI backend uses matching Pydantic models.

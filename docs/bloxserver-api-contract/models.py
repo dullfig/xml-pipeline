@@ -1,11 +1,11 @@
 """
-Nextra API Contract - Pydantic Models
+BloxServer API Contract - Pydantic Models
 
 These models define the API contract between frontend and backend.
 They match the TypeScript types in types.ts.
 
 Usage:
-    from nextra.api.models import Flow, CreateFlowRequest
+    from bloxserver.api.models import Flow, CreateFlowRequest
 """
 
 from __future__ import annotations

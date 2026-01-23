@@ -1,13 +1,13 @@
-# Nextra Landing Page — v0 Prompt
+# BloxServer Landing Page — v0 Prompt
 
 Paste this prompt into Vercel v0 to generate the landing page.
 
 ---
 
-Create a complete SaaS landing page for "Nextra" - a visual AI agent workflow builder.
+Create a complete SaaS landing page for "BloxServer" - a visual AI agent workflow builder.
 
 ## Brand
-- Name: Nextra
+- Name: BloxServer
 - Tagline: "Build AI agent swarms, visually"
 - Style: Dark mode (#0a0a0f background), purple/violet primary (#8b5cf6),
   subtle gradients, modern SaaS aesthetic like Linear or Vercel
@@ -117,7 +117,7 @@ Caption: "What you see is what you get. Power users can edit YAML directly."
 ## Testimonials Section (3 cards)
 Use placeholder testimonials:
 
-"Nextra replaced our entire agent orchestration layer. What took us
+"BloxServer replaced our entire agent orchestration layer. What took us
 weeks to build, we now do in hours."
 — Sarah Chen, CTO at [Placeholder]
 
@@ -147,7 +147,8 @@ Secondary link: "Talk to Sales →"
 - Logo + tagline
 - Columns: Product (Features, Pricing, Docs, Changelog), Company (About, Blog, Careers, Contact), Legal (Privacy, Terms, Security)
 - Social icons: Twitter/X, GitHub, Discord
-- Copyright: "© 2025 Nextra. All rights reserved."
+- Copyright: "© 2026 BloxServer. All rights reserved."
+- Domain: OpenBlox.ai
 
 ## Additional Details
 - Add subtle grid/dot pattern background in hero
