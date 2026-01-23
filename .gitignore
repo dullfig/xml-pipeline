@@ -33,3 +33,7 @@ xml_pipeline/config/*.signed.xml
 # OS
 Thumbs.db
 .DS_Store
+
+# BloxServer local dev
+bloxserver.db
+bloxserver/.env
