@@ -15,16 +15,45 @@ from xml_pipeline.primitives.todo import (
     handle_todo_complete,
 )
 from xml_pipeline.primitives.text_input import TextInput, TextOutput
+from xml_pipeline.primitives.sequence import (
+    SequenceStart,
+    SequenceComplete,
+    SequenceError,
+    handle_sequence_start,
+)
+from xml_pipeline.primitives.buffer import (
+    BufferStart,
+    BufferItem,
+    BufferComplete,
+    BufferDispatched,
+    BufferError,
+    handle_buffer_start,
+)
 
 __all__ = [
+    # Boot
     "Boot",
     "handle_boot",
+    # Todo
     "TodoUntil",
     "TodoComplete",
     "TodoRegistered",
     "TodoClosed",
     "handle_todo_until",
     "handle_todo_complete",
+    # Text I/O
     "TextInput",
     "TextOutput",
+    # Sequence orchestration
+    "SequenceStart",
+    "SequenceComplete",
+    "SequenceError",
+    "handle_sequence_start",
+    # Buffer orchestration
+    "BufferStart",
+    "BufferItem",
+    "BufferComplete",
+    "BufferDispatched",
+    "BufferError",
+    "handle_buffer_start",
 ]

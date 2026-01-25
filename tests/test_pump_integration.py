@@ -66,7 +66,7 @@ class TestPumpBootstrap:
         pump = await bootstrap('config/organism.yaml')
 
         assert pump.config.name == "hello-world"
-        assert len(pump.routing_table) == 6  # 3 user listeners + 3 system (boot, todo, todo-complete)
+        assert len(pump.routing_table) == 8  # 3 user listeners + 5 system (boot, todo, todo-complete, sequence, buffer)
         assert "greeter.greeting" in pump.routing_table
         assert "shouter.greetingresponse" in pump.routing_table
         assert "response-handler.shoutedresponse" in pump.routing_table

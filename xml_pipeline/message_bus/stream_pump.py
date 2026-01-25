@@ -210,6 +210,10 @@ class StreamPump:
         self.routing_table: Dict[str, List[Listener]] = {}
         self.listeners: Dict[str, Listener] = {}
 
+        # Generic listeners (accept any payload type)
+        # Used for ephemeral orchestration handlers (sequences, buffers)
+        self._generic_listeners: Dict[str, Listener] = {}
+
         # Per-agent semaphores for rate limiting
         self.agent_semaphores: Dict[str, asyncio.Semaphore] = {}
 
@@ -268,6 +272,82 @@ class StreamPump:
         self.routing_table.setdefault(root_tag, []).append(listener)
         self.listeners[lc.name] = listener
         return listener
+
+    def register_generic_listener(
+        self,
+        name: str,
+        handler: Callable,
+        description: str = "",
+    ) -> Listener:
+        """
+        Register a generic listener that accepts any payload type.
+
+        Used for ephemeral orchestration handlers (sequences, buffers)
+        that need to receive responses from various step types.
+
+        Generic listeners:
+        - Are NOT added to the routing table (no root_tag)
+        - Are looked up by name (to_id) as a fallback in routing
+        - Receive payload_tree directly (no XSD validation/deserialization)
+
+        Args:
+            name: Unique listener name (e.g., "sequence_abc123")
+            handler: Async handler function (receives payload_tree, metadata)
+            description: Human-readable description
+
+        Returns:
+            Listener object
+        """
+        listener = Listener(
+            name=name,
+            payload_class=object,  # Placeholder - not used
+            handler=handler,
+            description=description,
+            is_agent=False,
+            root_tag="*",  # Wildcard marker
+        )
+
+        self._generic_listeners[name.lower()] = listener
+        self.listeners[name] = listener
+
+        pump_logger.debug(f"Registered generic listener: {name}")
+        return listener
+
+    def unregister_listener(self, name: str) -> bool:
+        """
+        Remove a listener by name.
+
+        Used to clean up ephemeral listeners after orchestration completes.
+
+        Args:
+            name: Listener name to remove
+
+        Returns:
+            True if found and removed, False if not found
+        """
+        name_lower = name.lower()
+        removed = False
+
+        # Remove from generic listeners
+        if name_lower in self._generic_listeners:
+            del self._generic_listeners[name_lower]
+            removed = True
+            pump_logger.debug(f"Unregistered generic listener: {name}")
+
+        # Remove from main listeners dict
+        if name in self.listeners:
+            listener = self.listeners.pop(name)
+            removed = True
+
+            # Remove from routing table
+            if listener.root_tag and listener.root_tag != "*":
+                listeners_for_tag = self.routing_table.get(listener.root_tag, [])
+                if listener in listeners_for_tag:
+                    listeners_for_tag.remove(listener)
+                    if not listeners_for_tag:
+                        del self.routing_table[listener.root_tag]
+
+        return removed
 
     def register_all(self) -> None:
         # First pass: register all listeners
@@ -781,6 +861,8 @@ class StreamPump:
         Combined validation + deserialization.
 
         Uses to_id + payload tag to find the right listener and schema.
+        Falls back to generic listeners (ephemeral orchestration handlers)
+        when no regular listener matches.
         """
         if state.error or state.payload_tree is None:
             return state
@@ -794,6 +876,19 @@ class StreamPump:
         lookup_key = f"{to_id}.{payload_tag.lower()}" if to_id else payload_tag.lower()
 
         listeners = self.routing_table.get(lookup_key, [])
+
+        # Fallback: check for generic listener by to_id
+        # Generic listeners accept any payload type (for orchestration)
+        if not listeners and to_id:
+            generic_listener = self._generic_listeners.get(to_id)
+            if generic_listener:
+                # Generic listener: skip XSD validation and deserialization
+                # Pass the raw payload_tree to the handler
+                state.payload = state.payload_tree  # Handler receives Element
+                state.target_listeners = [generic_listener]
+                state.metadata["generic_handler"] = True
+                return state
+
         if not listeners:
             state.error = f"No listener for: {lookup_key}"
             return state
@@ -1008,6 +1103,36 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
     )
     pump.register_listener(todo_complete_config)
 
+    # Register Sequence primitives (orchestration)
+    from xml_pipeline.primitives.sequence import (
+        SequenceStart, handle_sequence_start,
+    )
+    sequence_config = ListenerConfig(
+        name="system.sequence",
+        payload_class_path="xml_pipeline.primitives.sequence.SequenceStart",
+        handler_path="xml_pipeline.primitives.sequence.handle_sequence_start",
+        description="System sequence handler - chains listeners in order",
+        is_agent=False,
+        payload_class=SequenceStart,
+        handler=handle_sequence_start,
+    )
+    pump.register_listener(sequence_config)
+
+    # Register Buffer primitives (fan-out orchestration)
+    from xml_pipeline.primitives.buffer import (
+        BufferStart, handle_buffer_start,
+    )
+    buffer_config = ListenerConfig(
+        name="system.buffer",
+        payload_class_path="xml_pipeline.primitives.buffer.BufferStart",
+        handler_path="xml_pipeline.primitives.buffer.handle_buffer_start",
+        description="System buffer handler - fan-out to parallel workers",
+        is_agent=False,
+        payload_class=BufferStart,
+        handler=handle_buffer_start,
+    )
+    pump.register_listener(buffer_config)
+
     # Register all user-defined listeners
     pump.register_all()
 
@@ -1061,6 +1186,9 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
     # Inject boot message (will be processed when pump.run() is called)
     await pump.inject(boot_envelope, thread_id=root_uuid, from_id="system")
 
+    # Set global pump instance for get_stream_pump()
+    set_stream_pump(pump)
+
     print(f"Routing: {list(pump.routing_table.keys())}")
     return pump
 
@@ -1110,3 +1238,45 @@ The key difference:
 - Old: 3 tool calls = 3 sequential awaits, each blocking until complete
 - New: 3 tool calls = 3 items in stream, processed concurrently up to task_limit
 """
+
+
+# ============================================================================
+# Global Singleton
+# ============================================================================
+
+_pump: Optional[StreamPump] = None
+
+
+def get_stream_pump() -> StreamPump:
+    """
+    Get the global StreamPump instance.
+
+    The pump is initialized via bootstrap() and set here.
+    Raises RuntimeError if called before bootstrap.
+    """
+    global _pump
+    if _pump is None:
+        raise RuntimeError(
+            "StreamPump not initialized. Call bootstrap() first."
+        )
+    return _pump
+
+
+def set_stream_pump(pump: StreamPump) -> None:
+    """
+    Set the global StreamPump instance.
+
+    Called by bootstrap() after creating the pump.
+    """
+    global _pump
+    _pump = pump
+
+
+def reset_stream_pump() -> None:
+    """
+    Reset the global StreamPump instance.
+
+    Useful for testing.
+    """
+    global _pump
+    _pump = None

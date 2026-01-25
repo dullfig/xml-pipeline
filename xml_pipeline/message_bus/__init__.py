@@ -30,6 +30,9 @@ from xml_pipeline.message_bus.stream_pump import (
     ListenerConfig,
     OrganismConfig,
     bootstrap,
+    get_stream_pump,
+    set_stream_pump,
+    reset_stream_pump,
 )
 
 from xml_pipeline.message_bus.message_state import (
@@ -42,15 +45,47 @@ from xml_pipeline.message_bus.system_pipeline import (
     ExternalMessage,
 )
 
+from xml_pipeline.message_bus.sequence_registry import (
+    SequenceState,
+    SequenceRegistry,
+    get_sequence_registry,
+    reset_sequence_registry,
+)
+
+from xml_pipeline.message_bus.buffer_registry import (
+    BufferState,
+    BufferItemResult,
+    BufferRegistry,
+    get_buffer_registry,
+    reset_buffer_registry,
+)
+
 __all__ = [
+    # Pump
     "StreamPump",
     "ConfigLoader",
     "Listener",
     "ListenerConfig",
     "OrganismConfig",
+    "bootstrap",
+    "get_stream_pump",
+    "set_stream_pump",
+    "reset_stream_pump",
+    # Message state
     "MessageState",
     "HandlerMetadata",
-    "bootstrap",
+    # System pipeline
     "SystemPipeline",
     "ExternalMessage",
+    # Sequence registry
+    "SequenceState",
+    "SequenceRegistry",
+    "get_sequence_registry",
+    "reset_sequence_registry",
+    # Buffer registry
+    "BufferState",
+    "BufferItemResult",
+    "BufferRegistry",
+    "get_buffer_registry",
+    "reset_buffer_registry",
 ]
