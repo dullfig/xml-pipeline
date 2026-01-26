@@ -2,6 +2,7 @@
 
 from bloxserver.api.models.database import Base, get_db, init_db
 from bloxserver.api.models.tables import (
+    EdgeMappingRecord,
     ExecutionRecord,
     FlowRecord,
     TriggerRecord,
@@ -20,4 +21,5 @@ __all__ = [
     "ExecutionRecord",
     "UserApiKeyRecord",
     "UsageRecord",
+    "EdgeMappingRecord",
 ]

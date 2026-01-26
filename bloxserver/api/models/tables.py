@@ -379,3 +379,68 @@ class StripeEventRecord(Base):
     __table_args__ = (
         Index("idx_stripe_events_processed", "processed_at"),
     )
+
+
+# =============================================================================
+# Edge Mappings (AI-assisted field mapping between nodes)
+# =============================================================================
+
+
+class ConfidenceLevel(str, enum.Enum):
+    """Confidence level for edge mapping analysis."""
+
+    HIGH = "high"      # Green - auto-mapped, ready to run
+    MEDIUM = "medium"  # Yellow - review suggested
+    LOW = "low"        # Red - manual mapping needed
+
+
+class EdgeMappingRecord(Base):
+    """
+    Mapping between two nodes in a flow.
+    
+    Stores both AI-proposed mappings and user overrides.
+    Used by the sequencer to transform outputs to inputs.
+    """
+
+    __tablename__ = "edge_mappings"
+
+    id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid4
+    )
+    flow_id: Mapped[UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("flows.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Edge identification
+    from_node: Mapped[str] = mapped_column(String(100), nullable=False)
+    to_node: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Analysis results
+    confidence: Mapped[float | None] = mapped_column(Numeric(3, 2))
+    level: Mapped[ConfidenceLevel | None] = mapped_column(Enum(ConfidenceLevel))
+    analysis_method: Mapped[str | None] = mapped_column(String(20))  # 'heuristic' or 'llm'
+
+    # The mappings (JSON)
+    proposed_mapping: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    user_mapping: Mapped[dict[str, Any] | None] = mapped_column(JSON)  # User overrides
+
+    # Status
+    user_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Timestamps
+    analyzed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    flow: Mapped[FlowRecord] = relationship("FlowRecord")
+
+    __table_args__ = (
+        Index("idx_edge_mappings_flow", "flow_id"),
+        Index("idx_edge_mappings_edge", "flow_id", "from_node", "to_node", unique=True),
+    )
