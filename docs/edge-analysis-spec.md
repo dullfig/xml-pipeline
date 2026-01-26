@@ -299,6 +299,104 @@ def generate_transformer(edge_mapping: EdgeMapping) -> Callable:
 
 3. Transformer is called between each step in the sequence
 
+## LLM-Created Sequences (Runtime)
+
+Agents can dynamically create sequences at runtime. The sequencer factory runs the same analysis but with stricter rules.
+
+### Runtime Policy
+
+| Confidence | Design-time (Canvas) | Run-time (LLM) |
+|------------|---------------------|----------------|
+| 🟢 High | Auto-wire, run | Auto-wire, run |
+| 🟡 Medium | Show warning, let user decide | **Block**, request clarification |
+| 🔴 Low | Show error, require manual | **Block**, request clarification |
+
+**Rationale:** Letting LLMs YOLO on uncertain mappings is risky. Better to ask for explicit instructions.
+
+### LLM Clarification Flow
+
+```
+1. LLM requests sequence: A → B → C
+2. Factory analyzes:
+   - A → B: green ✓
+   - B → C: yellow (ambiguous)
+3. Factory responds with structured error:
+   - Which edge failed
+   - What B outputs
+   - What C expects  
+   - Suggested resolutions
+4. LLM provides hints:
+   - Explicit mappings
+   - Constants for missing fields
+   - Fields to drop
+5. Factory re-analyzes with hints
+6. If green: run. If not: back to step 3.
+```
+
+### Edge Hints Payload
+
+LLMs can provide explicit wiring instructions:
+
+```xml
+<CreateSequence>
+  <steps>transformer, uploader</steps>
+  <initial_payload>...</initial_payload>
+  
+  <edge_hints>
+    <edge from="transformer" to="uploader">
+      <map from="result" to="payload"/>
+      <constant field="destination">/uploads/output.json</constant>
+      <drop field="factor"/>
+      <drop field="metadata"/>
+    </edge>
+  </edge_hints>
+</CreateSequence>
+```
+
+### Hint Types
+
+| Hint | Syntax | Effect |
+|------|--------|--------|
+| Map field | `<map from="X" to="Y"/>` | Wire source field to target field |
+| Set constant | `<constant field="Y">value</constant>` | Set target field to literal value |
+| Drop field | `<drop field="X"/>` | Explicitly ignore source field |
+| Expression | `<expr field="Y">concat(X.a, X.b)</expr>` | Compute target from expression |
+
+### Error Response to LLM
+
+When wiring fails:
+
+```xml
+<SequenceError>
+  <code>wiring_failed</code>
+  <edge from="transformer" to="uploader"/>
+  
+  <source_fields>
+    <field name="result" type="string"/>
+    <field name="factor" type="int"/>
+    <field name="metadata" type="object"/>
+  </source_fields>
+  
+  <target_fields>
+    <field name="payload" type="string" required="true" mapped="result" confidence="0.85"/>
+    <field name="destination" type="string" required="true" mapped="" confidence="0"/>
+  </target_fields>
+  
+  <issues>
+    <issue type="unmapped_required">destination has no source</issue>
+    <issue type="unmapped_source">factor will be dropped</issue>
+    <issue type="unmapped_source">metadata will be dropped</issue>
+  </issues>
+  
+  <suggestion>Provide mapping for 'destination' or set as constant.</suggestion>
+</SequenceError>
+```
+
+This gives the LLM enough information to either:
+- Provide the missing hints
+- Try a different sequence
+- Ask the user for help
+
 ## Future Enhancements
 
 ### v1.1 — Type Coercion
