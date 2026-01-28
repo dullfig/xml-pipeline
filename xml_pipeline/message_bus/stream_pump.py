@@ -26,7 +26,10 @@ import logging
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterable, Callable, List, Dict, Any, Optional
+from typing import AsyncIterable, Callable, List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xml_pipeline.crypto.identity import Identity
 
 import yaml
 from lxml import etree
@@ -209,6 +212,16 @@ class StreamPump:
         # Routing table
         self.routing_table: Dict[str, List[Listener]] = {}
         self.listeners: Dict[str, Listener] = {}
+
+        # Identity for envelope signing (optional)
+        self.identity: Optional["Identity"] = None
+        if config.identity_path:
+            try:
+                from xml_pipeline.crypto import Identity
+                self.identity = Identity.load(config.identity_path)
+                pump_logger.info(f"Identity loaded: {config.identity_path}")
+            except Exception as e:
+                pump_logger.warning(f"Failed to load identity: {e}")
 
         # Generic listeners (accept any payload type)
         # Used for ephemeral orchestration handlers (sequences, buffers)
@@ -660,7 +673,7 @@ class StreamPump:
                 )
 
     def _wrap_in_envelope(self, payload: Any, from_id: str, to_id: str, thread_id: str) -> bytes:
-        """Wrap a dataclass payload in a message envelope."""
+        """Wrap a dataclass payload in a message envelope, optionally signed."""
         # Serialize payload to XML
         if hasattr(payload, 'to_xml'):
             # SystemError and similar have manual to_xml()
@@ -680,7 +693,7 @@ class StreamPump:
             idx = payload_str.index('>')
             payload_str = payload_str[:idx] + ' xmlns=""' + payload_str[idx:]
 
-        envelope = f"""<message xmlns="https://xml-pipeline.org/ns/envelope/v1">
+        envelope_str = f"""<message xmlns="https://xml-pipeline.org/ns/envelope/v1">
   <meta>
     <from>{from_id}</from>
     <to>{to_id}</to>
@@ -688,7 +701,19 @@ class StreamPump:
   </meta>
   {payload_str}
 </message>"""
-        return envelope.encode('utf-8')
+
+        # Sign if identity is configured
+        if self.identity is not None:
+            try:
+                from xml_pipeline.crypto.signing import sign_envelope
+                envelope_tree = etree.fromstring(envelope_str.encode('utf-8'))
+                signed_tree = sign_envelope(envelope_tree, self.identity, in_place=True)
+                return etree.tostring(signed_tree, encoding='utf-8', xml_declaration=True)
+            except Exception as e:
+                pump_logger.warning(f"Failed to sign envelope: {e}")
+                # Fall through to unsigned
+
+        return envelope_str.encode('utf-8')
 
     async def _dispatch_to_process_pool(
         self,

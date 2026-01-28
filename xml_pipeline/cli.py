@@ -6,6 +6,7 @@ Usage:
     xml-pipeline init [name]           Create new organism config
     xml-pipeline check [config.yaml]   Validate config without running
     xml-pipeline version               Show version info
+    xml-pipeline keygen [-o path]      Generate Ed25519 identity keypair
 """
 
 import argparse
@@ -100,6 +101,41 @@ def cmd_version(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_keygen(args: argparse.Namespace) -> int:
+    """Generate Ed25519 identity keypair."""
+    from xml_pipeline.crypto import generate_identity
+
+    output = Path(args.output)
+
+    # Prevent overwrite unless forced
+    if output.exists() and not args.force:
+        print(f"Error: {output} already exists. Use --force to overwrite.", file=sys.stderr)
+        return 1
+
+    public_path = output.with_suffix(".pub")
+    if public_path.exists() and not args.force:
+        print(f"Error: {public_path} already exists. Use --force to overwrite.", file=sys.stderr)
+        return 1
+
+    try:
+        identity = generate_identity()
+        identity.save(output, public_path)
+
+        print(f"Generated Ed25519 identity keypair:")
+        print(f"  Private key: {output}")
+        print(f"  Public key:  {public_path}")
+        print()
+        print(f"Add to organism.yaml:")
+        print(f"  organism:")
+        print(f"    identity: \"{output}\"")
+        print()
+        print("IMPORTANT: Keep the private key secure. Never commit it to version control.")
+        return 0
+    except Exception as e:
+        print(f"Error generating keys: {e}", file=sys.stderr)
+        return 1
+
+
 def main() -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -128,6 +164,16 @@ def main() -> int:
     # version
     version_parser = subparsers.add_parser("version", help="Show version info")
     version_parser.set_defaults(func=cmd_version)
+
+    # keygen
+    keygen_parser = subparsers.add_parser("keygen", help="Generate Ed25519 identity keypair")
+    keygen_parser.add_argument(
+        "-o", "--output",
+        default="identity.key",
+        help="Output path for private key (default: identity.key)",
+    )
+    keygen_parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing")
+    keygen_parser.set_defaults(func=cmd_keygen)
 
     args = parser.parse_args()
     return args.func(args)
