@@ -77,6 +77,7 @@ xml-pipeline/
 │   ├── prompts/              # System prompts (no_paperclippers, etc.)
 │   ├── schema/               # XSD schema files
 │   ├── tools/                # Native tools (files, shell, search, etc.)
+│   ├── librarian/            # Premium Librarian (codebase intelligence)
 │   └── utils/                # Shared utilities
 ├── config/                   # Example organism configurations
 ├── docs/                     # Architecture and design docs
@@ -131,6 +132,7 @@ AgentServer implements a stream-based message pump where all communication flows
 | UsageTracker | `xml_pipeline/llm/usage_tracker.py` | Production billing and gas usage metering |
 | PromptRegistry | `xml_pipeline/platform/prompt_registry.py` | Immutable system prompt storage |
 | ContextBuffer | `xml_pipeline/memory/context_buffer.py` | Conversation history per thread |
+| PremiumLibrarian | `xml_pipeline/librarian/` | Codebase intelligence with RAG |
 
 ## Development Guidelines
 
@@ -362,6 +364,7 @@ pip install xml-pipeline[openai]      # OpenAI SDK
 # Tool backends
 pip install xml-pipeline[redis]       # Distributed key-value store
 pip install xml-pipeline[search]      # DuckDuckGo search
+pip install xml-pipeline[librarian]   # Codebase intelligence (GitPython)
 
 # Console example
 pip install xml-pipeline[console]     # prompt_toolkit for examples
@@ -401,6 +404,86 @@ Built-in message types in `xml_pipeline/primitives/`:
 | `TodoComplete` | Close a registered watcher |
 | `TextInput` | User text input from console |
 | `TextOutput` | Text output to console |
+
+## Premium Librarian (Codebase Intelligence)
+
+The Premium Librarian provides RLM-powered codebase intelligence using RAG (Retrieval-Augmented Generation). It ingests codebases, chunks them intelligently, stores in eXist-db, and answers natural language queries.
+
+### Architecture
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────────┐
+│   Ingest    │───▶│   Chunker   │───▶│   eXist-db      │
+│  (git/tar)  │    │  (AST-based)│    │  (XML storage)  │
+└─────────────┘    └─────────────┘    └────────┬────────┘
+                                               │
+┌─────────────┐    ┌─────────────┐    ┌────────▼────────┐
+│   Query     │───▶│  RAG Search │───▶│   Online LLM    │
+│  (natural   │    │  (XQuery +  │    │  (synthesis)    │
+│   language) │    │   Lucene)   │    └─────────────────┘
+└─────────────┘    └─────────────┘
+```
+
+### Components
+
+| Module | Location | Purpose |
+|--------|----------|---------|
+| Chunker | `xml_pipeline/librarian/chunker.py` | AST-based code chunking (Python, JS, C++) |
+| Ingest | `xml_pipeline/librarian/ingest.py` | Git clone + file walking + storage |
+| Index | `xml_pipeline/librarian/index.py` | Structural index (files, functions, classes) |
+| Query | `xml_pipeline/librarian/query.py` | RAG search + LLM synthesis |
+| Primitives | `xml_pipeline/librarian/primitives.py` | XML payloads for message bus |
+| Handler | `xml_pipeline/librarian/handler.py` | Message handlers |
+
+### Usage
+
+```python
+from xml_pipeline.librarian import ingest_git_repo, query_library
+
+# Ingest a codebase
+result = await ingest_git_repo(
+    url="https://github.com/example/repo.git",
+    branch="main",
+    library_name="my-lib",
+)
+print(f"Ingested {result.files_processed} files, {result.chunks_created} chunks")
+
+# Query the library
+answer = await query_library(
+    library_id=result.library_id,
+    question="How does the authentication system work?",
+)
+print(answer.answer)
+for source in answer.sources:
+    print(f"  - {source.file_path}:{source.start_line}-{source.end_line}")
+```
+
+### Supported Languages
+
+| Language | Chunking Method | Features |
+|----------|-----------------|----------|
+| Python | AST-based | Functions, classes, methods, imports, docstrings |
+| JavaScript/TypeScript | Regex-based | Functions, arrow functions, classes, JSDoc |
+| C/C++ | Regex-based | Functions, classes, structs, Doxygen |
+| Markdown/RST | Heading-based | Sections by headings |
+| Other | Line-based | Generic chunking with smart breaks |
+
+### Message Payloads
+
+| Payload | Purpose |
+|---------|---------|
+| `LibrarianIngest` | Request to ingest a git repository |
+| `LibrarianIngested` | Response with library_id and stats |
+| `LibrarianQuery` | Natural language query request |
+| `LibrarianAnswer` | Answer with sources and token usage |
+| `LibrarianList` | Request to list all libraries |
+| `LibrarianLibraries` | Response with library list |
+
+### Requirements
+
+- eXist-db running for chunk storage
+- LLM router configured for query synthesis
+- Install with: `pip install xml-pipeline[librarian]`
 
 ## Additional Resources
 
