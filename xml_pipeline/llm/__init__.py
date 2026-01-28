@@ -30,6 +30,20 @@ Usage Tracking:
 
     # Query totals
     totals = tracker.get_totals()
+
+Usage Persistence (for billing):
+    from xml_pipeline.llm import get_usage_store
+
+    store = await get_usage_store()
+
+    # Query historical usage
+    events = await store.query(
+        start_time="2025-01-01T00:00:00Z",
+        org_id="org-123",
+    )
+
+    # Get billing summary
+    summary = await store.get_billing_summary(org_id="org-123")
 """
 
 from xml_pipeline.llm.router import (
@@ -46,6 +60,13 @@ from xml_pipeline.llm.usage_tracker import (
     get_usage_tracker,
     reset_usage_tracker,
 )
+from xml_pipeline.llm.usage_store import (
+    UsageStore,
+    BillingSummary,
+    get_usage_store,
+    close_usage_store,
+    reset_usage_store,
+)
 
 __all__ = [
     # Router
@@ -58,9 +79,15 @@ __all__ = [
     "LLMRequest",
     "LLMResponse",
     "BackendError",
-    # Usage tracking
+    # Usage tracking (in-memory)
     "UsageTracker",
     "UsageEvent",
     "get_usage_tracker",
     "reset_usage_tracker",
+    # Usage persistence (SQLite)
+    "UsageStore",
+    "BillingSummary",
+    "get_usage_store",
+    "close_usage_store",
+    "reset_usage_store",
 ]

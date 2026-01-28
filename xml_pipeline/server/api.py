@@ -19,9 +19,12 @@ from xml_pipeline.server.models import (
     AgentInfo,
     AgentListResponse,
     AgentUsageInfo,
+    BillingSummaryResponse,
     CapabilityDetail,
     CapabilityInfo,
     CapabilityListResponse,
+    DailyUsagePoint,
+    DailyUsageResponse,
     ErrorResponse,
     InjectRequest,
     InjectResponse,
@@ -33,6 +36,8 @@ from xml_pipeline.server.models import (
     ThreadInfo,
     ThreadListResponse,
     ThreadStatus,
+    UsageEventInfo,
+    UsageHistoryResponse,
     UsageOverview,
     UsageResponse,
     UsageTotals,
@@ -424,6 +429,140 @@ def create_router(state: "ServerState") -> APIRouter:
 
         reset_usage_tracker()
         return {"success": True, "message": "Usage tracking reset"}
+
+    # =========================================================================
+    # Usage History Endpoints (Persistent)
+    # =========================================================================
+
+    @router.get("/usage/history", response_model=UsageHistoryResponse)
+    async def get_usage_history(
+        start_time: Optional[str] = Query(None, description="ISO 8601 start time"),
+        end_time: Optional[str] = Query(None, description="ISO 8601 end time"),
+        org_id: Optional[str] = Query(None, description="Filter by organization"),
+        agent_id: Optional[str] = Query(None, description="Filter by agent"),
+        model: Optional[str] = Query(None, description="Filter by model"),
+        limit: int = Query(100, ge=1, le=1000),
+        offset: int = Query(0, ge=0),
+    ) -> UsageHistoryResponse:
+        """
+        Query historical usage events from persistent storage.
+
+        Use for billing reconciliation, audit trails, and detailed analytics.
+        Events are stored in SQLite and persist across restarts.
+        """
+        from xml_pipeline.llm.usage_store import get_usage_store
+
+        store = await get_usage_store()
+
+        events = await store.query(
+            start_time=start_time,
+            end_time=end_time,
+            org_id=org_id,
+            agent_id=agent_id,
+            model=model,
+            limit=limit,
+            offset=offset,
+        )
+
+        total = await store.count(
+            start_time=start_time,
+            end_time=end_time,
+            org_id=org_id,
+        )
+
+        return UsageHistoryResponse(
+            events=[
+                UsageEventInfo(
+                    id=e["id"],
+                    timestamp=e["timestamp"],
+                    thread_id=e["thread_id"],
+                    agent_id=e.get("agent_id"),
+                    model=e["model"],
+                    provider=e["provider"],
+                    prompt_tokens=e["prompt_tokens"],
+                    completion_tokens=e["completion_tokens"],
+                    total_tokens=e["total_tokens"],
+                    latency_ms=e["latency_ms"],
+                    estimated_cost=e.get("estimated_cost"),
+                    metadata=e.get("metadata", {}),
+                )
+                for e in events
+            ],
+            count=len(events),
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
+
+    @router.get("/usage/billing", response_model=BillingSummaryResponse)
+    async def get_billing_summary(
+        start_time: Optional[str] = Query(None, description="ISO 8601 start time"),
+        end_time: Optional[str] = Query(None, description="ISO 8601 end time"),
+        org_id: Optional[str] = Query(None, description="Filter by organization"),
+    ) -> BillingSummaryResponse:
+        """
+        Get aggregated billing summary for a time period.
+
+        Returns total tokens, costs, and breakdowns by model and agent.
+        Use for invoicing and cost analysis.
+        """
+        from xml_pipeline.llm.usage_store import get_usage_store
+
+        store = await get_usage_store()
+
+        summary = await store.get_billing_summary(
+            start_time=start_time,
+            end_time=end_time,
+            org_id=org_id,
+        )
+
+        return BillingSummaryResponse(
+            org_id=summary.org_id,
+            start_time=summary.start_time,
+            end_time=summary.end_time,
+            total_tokens=summary.total_tokens,
+            prompt_tokens=summary.prompt_tokens,
+            completion_tokens=summary.completion_tokens,
+            request_count=summary.request_count,
+            total_cost=summary.total_cost,
+            by_model=summary.by_model,
+            by_agent=summary.by_agent,
+        )
+
+    @router.get("/usage/daily", response_model=DailyUsageResponse)
+    async def get_daily_usage(
+        start_time: Optional[str] = Query(None, description="ISO 8601 start time"),
+        end_time: Optional[str] = Query(None, description="ISO 8601 end time"),
+        org_id: Optional[str] = Query(None, description="Filter by organization"),
+    ) -> DailyUsageResponse:
+        """
+        Get usage aggregated by day for charting.
+
+        Returns daily totals for tokens, requests, and costs.
+        Useful for dashboards and trend analysis.
+        """
+        from xml_pipeline.llm.usage_store import get_usage_store
+
+        store = await get_usage_store()
+
+        days = await store.get_daily_usage(
+            start_time=start_time,
+            end_time=end_time,
+            org_id=org_id,
+        )
+
+        return DailyUsageResponse(
+            days=[
+                DailyUsagePoint(
+                    date=d["date"],
+                    total_tokens=d["total_tokens"],
+                    request_count=d["request_count"],
+                    total_cost=d["total_cost"],
+                )
+                for d in days
+            ],
+            count=len(days),
+        )
 
     # =========================================================================
     # Control Endpoints

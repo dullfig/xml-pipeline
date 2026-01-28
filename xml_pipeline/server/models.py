@@ -368,3 +368,66 @@ class ThreadBudgetListResponse(CamelModel):
     threads: List[ThreadBudgetInfo]
     count: int
     default_max_tokens: int = Field(alias="defaultMaxTokens")
+
+
+# =============================================================================
+# Usage History Models (Persistent)
+# =============================================================================
+
+
+class UsageEventInfo(CamelModel):
+    """A single usage event from history."""
+
+    id: int
+    timestamp: str
+    thread_id: str = Field(alias="threadId")
+    agent_id: Optional[str] = Field(None, alias="agentId")
+    model: str
+    provider: str
+    prompt_tokens: int = Field(alias="promptTokens")
+    completion_tokens: int = Field(alias="completionTokens")
+    total_tokens: int = Field(alias="totalTokens")
+    latency_ms: float = Field(alias="latencyMs")
+    estimated_cost: Optional[float] = Field(None, alias="estimatedCost")
+    metadata: dict = Field(default_factory=dict)
+
+
+class UsageHistoryResponse(CamelModel):
+    """Response for GET /usage/history."""
+
+    events: List[UsageEventInfo]
+    count: int
+    total: int
+    offset: int
+    limit: int
+
+
+class BillingSummaryResponse(CamelModel):
+    """Response for GET /usage/billing."""
+
+    org_id: Optional[str] = Field(None, alias="orgId")
+    start_time: str = Field(alias="startTime")
+    end_time: str = Field(alias="endTime")
+    total_tokens: int = Field(alias="totalTokens")
+    prompt_tokens: int = Field(alias="promptTokens")
+    completion_tokens: int = Field(alias="completionTokens")
+    request_count: int = Field(alias="requestCount")
+    total_cost: float = Field(alias="totalCost")
+    by_model: dict = Field(default_factory=dict, alias="byModel")
+    by_agent: dict = Field(default_factory=dict, alias="byAgent")
+
+
+class DailyUsagePoint(CamelModel):
+    """A single day's usage for charting."""
+
+    date: str
+    total_tokens: int = Field(alias="totalTokens")
+    request_count: int = Field(alias="requestCount")
+    total_cost: float = Field(alias="totalCost")
+
+
+class DailyUsageResponse(CamelModel):
+    """Response for GET /usage/daily."""
+
+    days: List[DailyUsagePoint]
+    count: int
