@@ -3,6 +3,7 @@ xml-pipeline CLI entry point.
 
 Usage:
     xml-pipeline run [config.yaml]     Run an organism
+    xml-pipeline serve [config.yaml]   Run organism with API server
     xml-pipeline init [name]           Create new organism config
     xml-pipeline check [config.yaml]   Validate config without running
     xml-pipeline version               Show version info
@@ -28,6 +29,68 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         config = load_config(config_path)
         asyncio.run(bootstrap(config))
+        return 0
+    except KeyboardInterrupt:
+        print("\nShutdown requested.")
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run an organism with the AgentServer API."""
+    try:
+        import uvicorn
+    except ImportError:
+        print("Error: uvicorn not installed.", file=sys.stderr)
+        print("Install with: pip install xml-pipeline[server]", file=sys.stderr)
+        return 1
+
+    from xml_pipeline.message_bus import bootstrap
+
+    config_path = Path(args.config)
+    if not config_path.exists():
+        print(f"Error: Config file not found: {config_path}", file=sys.stderr)
+        return 1
+
+    async def run_with_server():
+        """Bootstrap pump and run with server."""
+        from xml_pipeline.server import create_app
+
+        # Bootstrap the pump
+        pump = await bootstrap(str(config_path))
+
+        # Create FastAPI app
+        app = create_app(pump)
+
+        # Run uvicorn
+        config = uvicorn.Config(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
+        server = uvicorn.Server(config)
+
+        # Run pump and server concurrently
+        pump_task = asyncio.create_task(pump.run())
+
+        try:
+            await server.serve()
+        finally:
+            await pump.shutdown()
+            pump_task.cancel()
+            try:
+                await pump_task
+            except asyncio.CancelledError:
+                pass
+
+    try:
+        print(f"Starting AgentServer on http://{args.host}:{args.port}")
+        print(f"  API docs: http://{args.host}:{args.port}/docs")
+        print(f"  WebSocket: ws://{args.host}:{args.port}/ws")
+        asyncio.run(run_with_server())
         return 0
     except KeyboardInterrupt:
         print("\nShutdown requested.")
@@ -148,6 +211,13 @@ def main() -> int:
     run_parser = subparsers.add_parser("run", help="Run an organism")
     run_parser.add_argument("config", nargs="?", default="organism.yaml", help="Config file")
     run_parser.set_defaults(func=cmd_run)
+
+    # serve
+    serve_parser = subparsers.add_parser("serve", help="Run organism with API server")
+    serve_parser.add_argument("config", nargs="?", default="organism.yaml", help="Config file")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    serve_parser.add_argument("--port", "-p", type=int, default=8080, help="Port to listen on (default: 8080)")
+    serve_parser.set_defaults(func=cmd_serve)
 
     # init
     init_parser = subparsers.add_parser("init", help="Create new organism config")

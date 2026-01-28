@@ -80,6 +80,13 @@ search = ["duckduckgo-search>=6.0"] # Web search tool
 # Console example (optional, for interactive use)
 console = ["prompt_toolkit>=3.0"]
 
+# API server (FastAPI + WebSocket)
+server = [
+    "fastapi>=0.109",
+    "uvicorn[standard]>=0.27",
+    "websockets>=12.0",
+]
+
 # All LLM providers
 llm = ["xml-pipeline[anthropic,openai]"]
 
@@ -87,7 +94,7 @@ llm = ["xml-pipeline[anthropic,openai]"]
 tools = ["xml-pipeline[redis,search]"]
 
 # Everything (for local development)
-all = ["xml-pipeline[llm,tools,console]"]
+all = ["xml-pipeline[llm,tools,console,server]"]
 
 # Testing
 test = [

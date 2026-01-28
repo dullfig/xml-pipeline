@@ -33,6 +33,12 @@ from xml_pipeline.message_bus.stream_pump import (
     get_stream_pump,
     set_stream_pump,
     reset_stream_pump,
+    # Event hooks
+    PumpEvent,
+    MessageReceivedEvent,
+    MessageSentEvent,
+    AgentStateEvent,
+    ThreadEvent,
 )
 
 from xml_pipeline.message_bus.message_state import (
@@ -71,6 +77,12 @@ __all__ = [
     "get_stream_pump",
     "set_stream_pump",
     "reset_stream_pump",
+    # Event hooks
+    "PumpEvent",
+    "MessageReceivedEvent",
+    "MessageSentEvent",
+    "AgentStateEvent",
+    "ThreadEvent",
     # Message state
     "MessageState",
     "HandlerMetadata",

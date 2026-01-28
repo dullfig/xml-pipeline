@@ -50,6 +50,56 @@ pump_logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# Event Hooks
+# ============================================================================
+
+@dataclass
+class PumpEvent:
+    """Base class for pump events."""
+    pass
+
+
+@dataclass
+class MessageReceivedEvent(PumpEvent):
+    """Fired when a message is received by a handler."""
+    thread_id: str
+    from_id: str
+    to_id: str
+    payload_type: str
+    payload: Any
+
+
+@dataclass
+class MessageSentEvent(PumpEvent):
+    """Fired when a handler sends a response."""
+    thread_id: str
+    from_id: str
+    to_id: str
+    payload_type: str
+    payload: Any
+
+
+@dataclass
+class AgentStateEvent(PumpEvent):
+    """Fired when an agent's processing state changes."""
+    agent_name: str
+    state: str  # "idle", "processing", "waiting", "error"
+    thread_id: Optional[str] = None
+
+
+@dataclass
+class ThreadEvent(PumpEvent):
+    """Fired when a thread is created or completed."""
+    thread_id: str
+    status: str  # "created", "active", "completed", "error", "killed"
+    participants: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+
+EventCallback = Callable[[PumpEvent], None]
+
+
+# ============================================================================
 # Configuration (same as before)
 # ============================================================================
 
@@ -233,6 +283,9 @@ class StreamPump:
         # Shutdown control
         self._running = False
 
+        # Event hooks for external observers (ServerState, etc.)
+        self._event_callbacks: List[EventCallback] = []
+
         # Process pool for cpu_bound handlers
         self._process_pool: Optional[ProcessPoolExecutor] = None
         if config.process_pool_enabled:
@@ -255,6 +308,27 @@ class StreamPump:
             )
             self._shared_backend = get_shared_backend(backend_config)
             pump_logger.info(f"Shared backend: {config.backend_type}")
+
+    # ------------------------------------------------------------------
+    # Event Hooks
+    # ------------------------------------------------------------------
+
+    def subscribe_events(self, callback: EventCallback) -> None:
+        """Subscribe to pump events (message flow, agent state, thread lifecycle)."""
+        self._event_callbacks.append(callback)
+
+    def unsubscribe_events(self, callback: EventCallback) -> None:
+        """Unsubscribe from pump events."""
+        if callback in self._event_callbacks:
+            self._event_callbacks.remove(callback)
+
+    def _emit_event(self, event: PumpEvent) -> None:
+        """Emit an event to all subscribers (non-blocking)."""
+        for callback in self._event_callbacks:
+            try:
+                callback(event)
+            except Exception as e:
+                pump_logger.warning(f"Event callback error: {e}")
 
     # ------------------------------------------------------------------
     # Registration
@@ -493,6 +567,12 @@ class StreamPump:
                     await semaphore.acquire()
 
                 try:
+                    # Emit agent state change event
+                    self._emit_event(AgentStateEvent(
+                        agent_name=listener.name,
+                        state="processing",
+                        thread_id=state.thread_id,
+                    ))
                     # Ensure we have a valid thread chain
                     registry = get_registry()
                     todo_registry = get_todo_registry()
@@ -566,6 +646,15 @@ class StreamPump:
                         )
                         payload_ref = state.payload
 
+                    # Emit message received event
+                    self._emit_event(MessageReceivedEvent(
+                        thread_id=current_thread,
+                        from_id=state.from_id or "",
+                        to_id=listener.name,
+                        payload_type=type(payload_ref).__name__,
+                        payload=payload_ref,
+                    ))
+
                     # Dispatch to handler - either in-process or via ProcessPool
                     if listener.cpu_bound and self._process_pool and self._shared_backend:
                         response = await self._dispatch_to_process_pool(
@@ -578,6 +667,12 @@ class StreamPump:
 
                     # None means "no response needed" - don't re-inject
                     if response is None:
+                        # Emit idle state
+                        self._emit_event(AgentStateEvent(
+                            agent_name=listener.name,
+                            state="idle",
+                            thread_id=current_thread,
+                        ))
                         continue
 
                     # Handle clean HandlerResponse (preferred)
@@ -653,6 +748,23 @@ class StreamPump:
                         response_bytes = b"<huh>Handler returned invalid type</huh>"
                         thread_id = state.thread_id
 
+                    # Emit message sent event
+                    if isinstance(response, HandlerResponse):
+                        self._emit_event(MessageSentEvent(
+                            thread_id=thread_id,
+                            from_id=listener.name,
+                            to_id=to_id,
+                            payload_type=type(response.payload).__name__,
+                            payload=response.payload,
+                        ))
+
+                    # Emit agent state back to idle
+                    self._emit_event(AgentStateEvent(
+                        agent_name=listener.name,
+                        state="idle",
+                        thread_id=None,
+                    ))
+
                     # Yield response — will be processed by next iteration
                     yield MessageState(
                         raw_bytes=response_bytes,
@@ -665,6 +777,12 @@ class StreamPump:
                         semaphore.release()
 
             except Exception as exc:
+                # Emit error state
+                self._emit_event(AgentStateEvent(
+                    agent_name=listener.name,
+                    state="error",
+                    thread_id=state.thread_id,
+                ))
                 yield MessageState(
                     raw_bytes=f"<huh>Handler {listener.name} crashed: {exc}</huh>".encode(),
                     thread_id=state.thread_id,
