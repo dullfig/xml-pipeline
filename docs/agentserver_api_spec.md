@@ -81,6 +81,43 @@ The agentserver is the backend for monitoring and controlling an xml-pipeline or
 }
 ```
 
+### Library (Codebase Intelligence)
+```json
+{
+  "library_id": "fastapi-abc12345",
+  "name": "fastapi",
+  "source_url": "https://github.com/tiangolo/fastapi.git",
+  "created_at": "2024-01-15T10:00:00Z",
+  "total_files": 142,
+  "total_chunks": 890,
+  "stats": {
+    "functions": 234,
+    "classes": 45,
+    "lang_python": 890
+  }
+}
+```
+
+### Chunk (Code Fragment)
+```json
+{
+  "chunk_id": "fastapi/routing.py:APIRouter:a1b2c3d4",
+  "library_id": "fastapi-abc12345",
+  "file_path": "fastapi/routing.py",
+  "name": "APIRouter",
+  "chunk_type": "class",
+  "language": "python",
+  "start_line": 150,
+  "end_line": 320,
+  "signature": "class APIRouter(routing.Router)",
+  "docstring": "A router for grouping path operations."
+}
+```
+
+**Chunk types:** `function`, `method`, `class`, `module`, `section`, `block`
+
+**Languages:** `python`, `javascript`, `typescript`, `cpp`, `c`, `rust`, `go`, `java`, `markdown`, `unknown`
+
 ---
 
 ## REST API
@@ -139,6 +176,157 @@ Response:
 {
   "thread_id": "new-or-existing-uuid",
   "message_id": "msg-uuid"
+}
+```
+
+### Librarian (Codebase Intelligence)
+
+RAG-powered codebase intelligence. Ingest git repositories, chunk code intelligently, and query with natural language.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/librarian/libraries` | GET | List all ingested libraries |
+| `/librarian/libraries` | POST | Ingest a new codebase |
+| `/librarian/libraries/{id}` | GET | Get library details and index |
+| `/librarian/libraries/{id}` | DELETE | Delete a library |
+| `/librarian/libraries/{id}/query` | POST | Query library with natural language |
+| `/librarian/libraries/{id}/chunks/{chunk_id}` | GET | Get specific code chunk |
+
+#### GET /librarian/libraries
+
+List all ingested libraries.
+
+Response:
+```json
+{
+  "libraries": [
+    {
+      "library_id": "fastapi-abc12345",
+      "name": "fastapi",
+      "source_url": "https://github.com/tiangolo/fastapi.git",
+      "created_at": "2024-01-15T10:00:00Z",
+      "total_files": 142,
+      "total_chunks": 890
+    }
+  ],
+  "count": 1
+}
+```
+
+#### POST /librarian/libraries
+
+Ingest a git repository.
+
+Request:
+```json
+{
+  "git_url": "https://github.com/tiangolo/fastapi.git",
+  "branch": "main",
+  "library_name": "fastapi"
+}
+```
+
+Response:
+```json
+{
+  "library_id": "fastapi-abc12345",
+  "library_name": "fastapi",
+  "files_processed": 142,
+  "chunks_created": 890,
+  "index_built": true,
+  "errors": []
+}
+```
+
+#### GET /librarian/libraries/{id}
+
+Get library index with structural information.
+
+Response:
+```json
+{
+  "library_id": "fastapi-abc12345",
+  "name": "fastapi",
+  "source_url": "https://github.com/tiangolo/fastapi.git",
+  "created_at": "2024-01-15T10:00:00Z",
+  "files": ["fastapi/main.py", "fastapi/routing.py", ...],
+  "functions": {
+    "get_swagger_ui_html": "fastapi/openapi/docs.py",
+    "get_redoc_html": "fastapi/openapi/docs.py"
+  },
+  "classes": {
+    "FastAPI": "fastapi/applications.py",
+    "APIRouter": "fastapi/routing.py"
+  },
+  "stats": {
+    "chunks": 890,
+    "files": 142,
+    "functions": 234,
+    "classes": 45,
+    "lang_python": 890
+  }
+}
+```
+
+#### POST /librarian/libraries/{id}/query
+
+Query a library with natural language. Uses RAG to search relevant chunks and synthesize an answer.
+
+Request:
+```json
+{
+  "question": "How does dependency injection work in FastAPI?",
+  "max_chunks": 20,
+  "model": "grok-4.1"
+}
+```
+
+Response:
+```json
+{
+  "answer": "FastAPI implements dependency injection through the `Depends` function...",
+  "sources": [
+    {
+      "file_path": "fastapi/dependencies/utils.py",
+      "name": "solve_dependencies",
+      "chunk_type": "function",
+      "start_line": 45,
+      "end_line": 120,
+      "relevance_score": 0.95,
+      "snippet": "async def solve_dependencies(..."
+    },
+    {
+      "file_path": "fastapi/params.py",
+      "name": "Depends",
+      "chunk_type": "class",
+      "start_line": 10,
+      "end_line": 35,
+      "relevance_score": 0.88,
+      "snippet": "class Depends:..."
+    }
+  ],
+  "tokens_used": 2450,
+  "chunks_examined": 15
+}
+```
+
+#### GET /librarian/libraries/{id}/chunks/{chunk_id}
+
+Retrieve a specific code chunk (for viewing full source).
+
+Response:
+```json
+{
+  "chunk_id": "fastapi/routing.py:APIRouter:a1b2c3d4",
+  "file_path": "fastapi/routing.py",
+  "name": "APIRouter",
+  "chunk_type": "class",
+  "language": "python",
+  "start_line": 150,
+  "end_line": 320,
+  "content": "class APIRouter:\n    \"\"\"...",
+  "docstring": "A router for grouping path operations.",
+  "signature": "class APIRouter(routing.Router)"
 }
 ```
 
