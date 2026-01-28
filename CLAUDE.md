@@ -127,6 +127,8 @@ AgentServer implements a stream-based message pump where all communication flows
 | ThreadRegistry | `xml_pipeline/message_bus/thread_registry.py` | Maps opaque UUIDs to call chains |
 | SystemPipeline | `xml_pipeline/message_bus/system_pipeline.py` | External message injection (console, webhooks) |
 | LLMRouter | `xml_pipeline/llm/router.py` | Multi-backend LLM routing with failover |
+| ThreadBudgetRegistry | `xml_pipeline/message_bus/budget_registry.py` | Per-thread token limits and enforcement |
+| UsageTracker | `xml_pipeline/llm/usage_tracker.py` | Production billing and gas usage metering |
 | PromptRegistry | `xml_pipeline/platform/prompt_registry.py` | Immutable system prompt storage |
 | ContextBuffer | `xml_pipeline/memory/context_buffer.py` | Conversation history per thread |
 
@@ -235,6 +237,7 @@ See @docs/configuration.md for full reference.
 organism:
   name: my-organism
   port: 8765
+  max_tokens_per_thread: 100000  # Token budget per thread
 
 llm:
   strategy: failover
@@ -260,6 +263,65 @@ listeners:
 - **Opaque Thread UUIDs:** Handlers see only UUIDs, never internal call chains
 - **Envelope Injection:** `<from>`, `<thread>`, `<to>` always set by system, never by handlers
 - **OOB Channel:** Privileged commands use separate localhost-only channel
+
+## Token Budget & Usage Tracking
+
+The platform provides three layers of token tracking:
+
+| Layer | Module | Purpose |
+|-------|--------|---------|
+| Per-agent | `LLMRouter._agent_usage` | Internal token tracking per agent |
+| Per-thread | `ThreadBudgetRegistry` | Enforcement limits (blocks LLM calls) |
+| Platform | `UsageTracker` | Production billing and gas metering |
+
+### Thread Budget Enforcement
+
+Each thread has a token budget (default: 100,000 tokens). LLM calls are blocked when exhausted:
+
+```python
+from xml_pipeline.message_bus import get_budget_registry, BudgetExhaustedError
+
+registry = get_budget_registry()
+
+# Check before LLM call (automatic in router)
+try:
+    registry.check_budget(thread_id, estimated_tokens=1000)
+except BudgetExhaustedError as e:
+    print(f"Thread {e.thread_id} exhausted: {e.used}/{e.max_tokens}")
+```
+
+Configure via `organism.yaml`:
+
+```yaml
+organism:
+  name: my-organism
+  max_tokens_per_thread: 100000  # Default
+```
+
+### Usage Tracking (Billing)
+
+Subscribe to usage events for production billing:
+
+```python
+from xml_pipeline.llm import get_usage_tracker
+
+tracker = get_usage_tracker()
+
+# Subscribe to events (for billing webhook, database, etc.)
+def record_usage(event):
+    billing_db.record(
+        org_id=event.metadata.get("org_id"),
+        tokens=event.total_tokens,
+        cost=event.estimated_cost,  # USD estimate
+    )
+
+tracker.subscribe(record_usage)
+
+# Query totals
+totals = tracker.get_totals()
+print(f"Total tokens: {totals['total_tokens']}")
+print(f"Total cost: ${totals['total_cost']}")
+```
 
 ## Message Envelope Format
 
