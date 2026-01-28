@@ -17,7 +17,26 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Set, Tuple
+
+
+# Default warning thresholds (percent -> severity)
+DEFAULT_WARNING_THRESHOLDS: Dict[int, str] = {
+    75: "warning",    # 75% - early warning
+    90: "critical",   # 90% - wrap up soon
+    95: "final",      # 95% - last chance
+}
+
+
+@dataclass
+class BudgetThresholdCrossed:
+    """Info about a threshold that was just crossed."""
+    threshold_percent: int
+    severity: str
+    percent_used: float
+    tokens_used: int
+    tokens_remaining: int
+    max_tokens: int
 
 
 @dataclass
@@ -28,6 +47,7 @@ class ThreadBudget:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     request_count: int = 0
+    triggered_thresholds: Set[int] = field(default_factory=set)
 
     @property
     def total_tokens(self) -> int:
@@ -44,6 +64,13 @@ class ThreadBudget:
         """True if budget is exhausted."""
         return self.total_tokens >= self.max_tokens
 
+    @property
+    def percent_used(self) -> float:
+        """Percentage of budget consumed (0-100)."""
+        if self.max_tokens <= 0:
+            return 0.0
+        return (self.total_tokens / self.max_tokens) * 100
+
     def can_consume(self, estimated_tokens: int) -> bool:
         """Check if we can consume the given tokens without exceeding budget."""
         return self.total_tokens + estimated_tokens <= self.max_tokens
@@ -57,6 +84,42 @@ class ThreadBudget:
         self.prompt_tokens += prompt_tokens
         self.completion_tokens += completion_tokens
         self.request_count += 1
+
+    def check_thresholds(
+        self,
+        thresholds: Dict[int, str] = None,
+    ) -> List[BudgetThresholdCrossed]:
+        """
+        Check if any thresholds were crossed that haven't been triggered yet.
+
+        Args:
+            thresholds: Dict of percent -> severity. Defaults to DEFAULT_WARNING_THRESHOLDS.
+
+        Returns:
+            List of newly crossed thresholds (sorted by percent)
+        """
+        if thresholds is None:
+            thresholds = DEFAULT_WARNING_THRESHOLDS
+
+        crossed = []
+        current_percent = self.percent_used
+
+        for threshold_percent, severity in sorted(thresholds.items()):
+            if (
+                current_percent >= threshold_percent
+                and threshold_percent not in self.triggered_thresholds
+            ):
+                self.triggered_thresholds.add(threshold_percent)
+                crossed.append(BudgetThresholdCrossed(
+                    threshold_percent=threshold_percent,
+                    severity=severity,
+                    percent_used=round(current_percent, 1),
+                    tokens_used=self.total_tokens,
+                    tokens_remaining=self.remaining,
+                    max_tokens=self.max_tokens,
+                ))
+
+        return crossed
 
 
 class BudgetExhaustedError(Exception):
@@ -176,7 +239,7 @@ class ThreadBudgetRegistry:
         thread_id: str,
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
-    ) -> ThreadBudget:
+    ) -> Tuple[ThreadBudget, List[BudgetThresholdCrossed]]:
         """
         Record token consumption for a thread.
 
@@ -186,12 +249,13 @@ class ThreadBudgetRegistry:
             completion_tokens: Completion tokens used
 
         Returns:
-            Updated ThreadBudget
+            Tuple of (Updated ThreadBudget, List of newly crossed thresholds)
         """
         budget = self.get_budget(thread_id)
         with self._lock:
             budget.consume(prompt_tokens, completion_tokens)
-        return budget
+            crossed = budget.check_thresholds()
+        return budget, crossed
 
     def has_budget(self, thread_id: str) -> bool:
         """Check if a thread has a budget entry (without creating one)."""

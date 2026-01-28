@@ -29,6 +29,10 @@ from xml_pipeline.primitives.buffer import (
     BufferError,
     handle_buffer_start,
 )
+from xml_pipeline.primitives.budget_warning import (
+    BudgetWarning,
+    DEFAULT_THRESHOLDS,
+)
 
 __all__ = [
     # Boot
@@ -56,4 +60,7 @@ __all__ = [
     "BufferDispatched",
     "BufferError",
     "handle_buffer_start",
+    # Budget warnings
+    "BudgetWarning",
+    "DEFAULT_THRESHOLDS",
 ]

@@ -210,14 +210,23 @@ class LLMRouter:
                     usage.request_count += 1
 
                 # Record to thread budget (enforcement)
+                crossed_thresholds = []
                 if thread_id:
                     from xml_pipeline.message_bus.budget_registry import get_budget_registry
                     budget_registry = get_budget_registry()
-                    budget_registry.consume(
+                    _budget, crossed_thresholds = budget_registry.consume(
                         thread_id,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
                     )
+
+                    # Inject BudgetWarning messages for any newly crossed thresholds
+                    if crossed_thresholds:
+                        await self._inject_budget_warnings(
+                            thread_id=thread_id,
+                            agent_id=agent_id,
+                            crossed=crossed_thresholds,
+                        )
 
                 # Emit usage event (for billing)
                 from xml_pipeline.llm.usage_tracker import get_usage_tracker
@@ -264,6 +273,80 @@ class LLMRouter:
         # Add jitter (±25%)
         jitter = delay * 0.25 * (random.random() * 2 - 1)
         return delay + jitter
+
+    async def _inject_budget_warnings(
+        self,
+        thread_id: str,
+        agent_id: Optional[str],
+        crossed: List,  # List[BudgetThresholdCrossed]
+    ) -> None:
+        """
+        Inject BudgetWarning messages when thresholds are crossed.
+
+        Each crossed threshold generates a separate warning message
+        sent to the agent via the stream pump.
+        """
+        from xml_pipeline.primitives.budget_warning import BudgetWarning
+
+        # Get the stream pump (may not be initialized in tests)
+        try:
+            from xml_pipeline.message_bus.stream_pump import get_stream_pump
+            pump = get_stream_pump()
+        except RuntimeError:
+            # Pump not initialized - log and skip
+            logger.warning(
+                f"Cannot inject BudgetWarning: StreamPump not initialized. "
+                f"Thread {thread_id[:8]}... crossed thresholds: {[c.threshold_percent for c in crossed]}"
+            )
+            return
+
+        for threshold in crossed:
+            # Build human-readable message based on severity
+            if threshold.severity == "final":
+                message = (
+                    f"CRITICAL: {threshold.percent_used:.0f}% of token budget used. "
+                    f"Only {threshold.tokens_remaining:,} tokens remaining. "
+                    f"Wrap up immediately or your next request may fail."
+                )
+            elif threshold.severity == "critical":
+                message = (
+                    f"WARNING: {threshold.percent_used:.0f}% of token budget used. "
+                    f"{threshold.tokens_remaining:,} tokens remaining. "
+                    f"Consider wrapping up your current task soon."
+                )
+            else:  # warning
+                message = (
+                    f"Note: {threshold.percent_used:.0f}% of token budget used. "
+                    f"{threshold.tokens_remaining:,} tokens remaining."
+                )
+
+            warning_payload = BudgetWarning(
+                percent_used=threshold.percent_used,
+                tokens_used=threshold.tokens_used,
+                tokens_remaining=threshold.tokens_remaining,
+                max_tokens=threshold.max_tokens,
+                severity=threshold.severity,
+                message=message,
+            )
+
+            # Create envelope for the warning
+            # Target is the agent that made the LLM call
+            target = agent_id if agent_id else "system"
+
+            envelope = pump._wrap_in_envelope(
+                payload=warning_payload,
+                from_id="system.budget",
+                to_id=target,
+                thread_id=thread_id,
+            )
+
+            # Inject into the pump's queue
+            await pump.inject(envelope, thread_id=thread_id, from_id="system.budget")
+
+            logger.info(
+                f"BudgetWarning sent to {target}: {threshold.severity} "
+                f"({threshold.percent_used:.0f}% used, {threshold.tokens_remaining:,} remaining)"
+            )
 
     def get_agent_usage(self, agent_id: str) -> AgentUsage:
         """Get usage stats for an agent."""
