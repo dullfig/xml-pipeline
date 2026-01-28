@@ -141,6 +141,9 @@ class OrganismConfig:
     max_concurrent_handlers: int = 20     # Concurrent handler invocations
     max_concurrent_per_agent: int = 5     # Per-agent rate limit
 
+    # Token budget enforcement
+    max_tokens_per_thread: int = 100_000  # Max tokens per conversation thread
+
     # LLM configuration (optional)
     llm_config: Dict[str, Any] = field(default_factory=dict)
 
@@ -1271,6 +1274,7 @@ class ConfigLoader:
             max_concurrent_pipelines=raw.get("max_concurrent_pipelines", 50),
             max_concurrent_handlers=raw.get("max_concurrent_handlers", 20),
             max_concurrent_per_agent=raw.get("max_concurrent_per_agent", 5),
+            max_tokens_per_thread=raw.get("max_tokens_per_thread", 100_000),
             llm_config=raw.get("llm", {}),
             process_pool_enabled=process_pool_enabled,
             process_pool_workers=process_pool_workers,
@@ -1429,6 +1433,11 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
         from xml_pipeline.llm import configure_router
         configure_router(config.llm_config)
         print(f"LLM backends: {len(config.llm_config.get('backends', []))}")
+
+    # Configure thread budget registry
+    from xml_pipeline.message_bus.budget_registry import configure_budget_registry
+    configure_budget_registry(config.max_tokens_per_thread)
+    print(f"Token budget: {config.max_tokens_per_thread:,} per thread")
 
     # Initialize root thread in registry
     registry = get_registry()

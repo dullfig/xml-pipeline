@@ -67,6 +67,15 @@ from xml_pipeline.message_bus.buffer_registry import (
     reset_buffer_registry,
 )
 
+from xml_pipeline.message_bus.budget_registry import (
+    ThreadBudget,
+    ThreadBudgetRegistry,
+    BudgetExhaustedError,
+    get_budget_registry,
+    configure_budget_registry,
+    reset_budget_registry,
+)
+
 __all__ = [
     # Pump
     "StreamPump",
@@ -102,4 +111,11 @@ __all__ = [
     "BufferRegistry",
     "get_buffer_registry",
     "reset_buffer_registry",
+    # Budget registry
+    "ThreadBudget",
+    "ThreadBudgetRegistry",
+    "BudgetExhaustedError",
+    "get_budget_registry",
+    "configure_budget_registry",
+    "reset_budget_registry",
 ]

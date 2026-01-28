@@ -9,6 +9,8 @@ The router handles:
 - Load balancing (failover, round-robin, least-loaded)
 - Retries with exponential backoff
 - Token tracking per agent
+- Thread budget enforcement
+- Usage event emission for billing
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Dict, Any, Optional
@@ -125,6 +128,8 @@ class LLMRouter:
         max_tokens: int = None,
         tools: List[Dict] = None,
         agent_id: str = None,
+        thread_id: str = None,
+        metadata: Dict[str, Any] = None,
     ) -> LLMResponse:
         """
         Execute a completion request.
@@ -136,10 +141,27 @@ class LLMRouter:
             max_tokens: Max tokens in response
             tools: Tool definitions for function calling
             agent_id: Optional agent ID for usage tracking
+            thread_id: Optional thread ID for budget enforcement
+            metadata: Optional metadata for usage events (org_id, user_id, etc.)
 
         Returns:
             LLMResponse with content and usage stats
+
+        Raises:
+            BudgetExhaustedError: If thread has no remaining budget
+            BackendError: If all backends fail
         """
+        # Estimate tokens for budget check (rough: 4 chars per token)
+        estimated_tokens = sum(len(m.get("content", "")) for m in messages) // 4
+        estimated_tokens = max(estimated_tokens, 100)  # minimum estimate
+
+        # Check thread budget before proceeding
+        if thread_id:
+            from xml_pipeline.message_bus.budget_registry import get_budget_registry
+            budget_registry = get_budget_registry()
+            # This raises BudgetExhaustedError if over budget
+            budget_registry.check_budget(thread_id, estimated_tokens)
+
         candidates = self._find_backends(model)
         request = LLMRequest(
             model=model,
@@ -151,6 +173,7 @@ class LLMRouter:
 
         last_error = None
         tried_backends = set()
+        start_time = time.monotonic()
 
         for attempt in range(self.retries + 1):
             # Select backend (different selection on retry for failover)
@@ -170,13 +193,45 @@ class LLMRouter:
                 logger.debug(f"Attempting {model} on {backend.name} (attempt {attempt + 1})")
                 response = await backend.complete(request)
 
-                # Track usage
+                # Calculate latency
+                latency_ms = (time.monotonic() - start_time) * 1000
+
+                # Extract usage
+                prompt_tokens = response.usage.get("prompt_tokens", 0)
+                completion_tokens = response.usage.get("completion_tokens", 0)
+                total_tokens = response.usage.get("total_tokens", 0)
+
+                # Track per-agent usage (internal)
                 if agent_id:
                     usage = self._agent_usage.setdefault(agent_id, AgentUsage())
-                    usage.total_tokens += response.usage.get("total_tokens", 0)
-                    usage.prompt_tokens += response.usage.get("prompt_tokens", 0)
-                    usage.completion_tokens += response.usage.get("completion_tokens", 0)
+                    usage.total_tokens += total_tokens
+                    usage.prompt_tokens += prompt_tokens
+                    usage.completion_tokens += completion_tokens
                     usage.request_count += 1
+
+                # Record to thread budget (enforcement)
+                if thread_id:
+                    from xml_pipeline.message_bus.budget_registry import get_budget_registry
+                    budget_registry = get_budget_registry()
+                    budget_registry.consume(
+                        thread_id,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
+
+                # Emit usage event (for billing)
+                from xml_pipeline.llm.usage_tracker import get_usage_tracker
+                tracker = get_usage_tracker()
+                tracker.record(
+                    thread_id=thread_id or "",
+                    agent_id=agent_id,
+                    model=response.model,
+                    provider=backend.provider,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                    metadata=metadata,
+                )
 
                 return response
 
@@ -286,6 +341,10 @@ def configure_router(config: Dict[str, Any]) -> LLMRouter:
 async def complete(
     model: str,
     messages: List[Dict[str, str]],
+    *,
+    thread_id: str = None,
+    agent_id: str = None,
+    metadata: Dict[str, Any] = None,
     **kwargs,
 ) -> LLMResponse:
     """
@@ -293,6 +352,32 @@ async def complete(
 
     Usage:
         from xml_pipeline.llm import router
-        response = await router.complete("grok-4.1", messages)
+        response = await router.complete(
+            "grok-4.1",
+            messages,
+            thread_id=metadata.thread_id,
+            agent_id=metadata.own_name,
+        )
+
+    Args:
+        model: Model name
+        messages: Chat messages
+        thread_id: Thread UUID for budget enforcement
+        agent_id: Agent name for usage tracking
+        metadata: Extra metadata for billing events
+        **kwargs: Additional arguments (temperature, max_tokens, tools)
+
+    Returns:
+        LLMResponse with content and usage stats
+
+    Raises:
+        BudgetExhaustedError: If thread budget exhausted
     """
-    return await get_router().complete(model, messages, **kwargs)
+    return await get_router().complete(
+        model,
+        messages,
+        thread_id=thread_id,
+        agent_id=agent_id,
+        metadata=metadata,
+        **kwargs,
+    )
