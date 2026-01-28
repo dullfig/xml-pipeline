@@ -193,23 +193,32 @@ class ThreadBudgetRegistry:
             budget.consume(prompt_tokens, completion_tokens)
         return budget
 
-    def get_usage(self, thread_id: str) -> Dict[str, int]:
+    def has_budget(self, thread_id: str) -> bool:
+        """Check if a thread has a budget entry (without creating one)."""
+        with self._lock:
+            return thread_id in self._budgets
+
+    def get_usage(self, thread_id: str) -> Optional[Dict[str, int]]:
         """
         Get usage stats for a thread.
 
         Returns:
             Dict with prompt_tokens, completion_tokens, total_tokens,
-            remaining, max_tokens, request_count
+            remaining, max_tokens, request_count.
+            Returns None if thread has no budget.
         """
-        budget = self.get_budget(thread_id)
-        return {
-            "prompt_tokens": budget.prompt_tokens,
-            "completion_tokens": budget.completion_tokens,
-            "total_tokens": budget.total_tokens,
-            "remaining": budget.remaining,
-            "max_tokens": budget.max_tokens,
-            "request_count": budget.request_count,
-        }
+        with self._lock:
+            if thread_id not in self._budgets:
+                return None
+            budget = self._budgets[thread_id]
+            return {
+                "prompt_tokens": budget.prompt_tokens,
+                "completion_tokens": budget.completion_tokens,
+                "total_tokens": budget.total_tokens,
+                "remaining": budget.remaining,
+                "max_tokens": budget.max_tokens,
+                "request_count": budget.request_count,
+            }
 
     def get_all_usage(self) -> Dict[str, Dict[str, int]]:
         """Get usage stats for all threads."""

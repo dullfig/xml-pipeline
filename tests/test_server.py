@@ -616,3 +616,278 @@ class TestCapabilityIntrospectionState:
         """Test get_capability returns None for unknown."""
         detail = server_state.get_capability("nonexistent")
         assert detail is None
+
+
+# ============================================================================
+# Test Usage/Gas Tracking API
+# ============================================================================
+
+class TestUsageAPI:
+    """Test usage/gas tracking endpoints."""
+
+    def test_get_usage_overview(self, test_client):
+        """Test GET /api/v1/usage returns overview."""
+        # Reset trackers for clean state
+        from xml_pipeline.llm import reset_usage_tracker
+        from xml_pipeline.message_bus import reset_budget_registry
+
+        reset_usage_tracker()
+        reset_budget_registry()
+
+        response = test_client.get("/api/v1/usage")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "usage" in data
+
+        usage = data["usage"]
+        assert "totals" in usage
+        assert "byAgent" in usage
+        assert "byModel" in usage
+        assert "activeThreads" in usage
+
+        totals = usage["totals"]
+        assert "totalTokens" in totals
+        assert "promptTokens" in totals
+        assert "completionTokens" in totals
+        assert "requestCount" in totals
+        assert "totalCost" in totals
+        assert "avgLatencyMs" in totals
+
+    def test_get_usage_with_data(self, test_client):
+        """Test usage reflects recorded data."""
+        from xml_pipeline.llm import get_usage_tracker, reset_usage_tracker
+
+        reset_usage_tracker()
+        tracker = get_usage_tracker()
+
+        # Record some usage
+        tracker.record(
+            thread_id="test-thread",
+            agent_id="greeter",
+            model="grok-4.1",
+            provider="xai",
+            prompt_tokens=100,
+            completion_tokens=50,
+            latency_ms=250.0,
+        )
+
+        response = test_client.get("/api/v1/usage")
+        assert response.status_code == 200
+
+        data = response.json()
+        totals = data["usage"]["totals"]
+        assert totals["totalTokens"] == 150
+        assert totals["promptTokens"] == 100
+        assert totals["completionTokens"] == 50
+        assert totals["requestCount"] == 1
+
+        # Check by-agent breakdown
+        by_agent = data["usage"]["byAgent"]
+        assert len(by_agent) == 1
+        assert by_agent[0]["agentId"] == "greeter"
+        assert by_agent[0]["totalTokens"] == 150
+
+        # Check by-model breakdown
+        by_model = data["usage"]["byModel"]
+        assert len(by_model) == 1
+        assert by_model[0]["model"] == "grok-4.1"
+        assert by_model[0]["totalTokens"] == 150
+
+    def test_get_thread_budgets_empty(self, test_client):
+        """Test GET /api/v1/usage/threads with no threads."""
+        from xml_pipeline.message_bus import reset_budget_registry
+
+        reset_budget_registry()
+
+        response = test_client.get("/api/v1/usage/threads")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "threads" in data
+        assert "count" in data
+        assert "defaultMaxTokens" in data
+        assert data["count"] == 0
+
+    def test_get_thread_budgets_with_data(self, test_client):
+        """Test thread budgets reflect consumption."""
+        from xml_pipeline.message_bus import get_budget_registry, reset_budget_registry
+
+        reset_budget_registry()
+        registry = get_budget_registry()
+
+        # Consume some tokens
+        registry.consume("thread-1", 5000, 2000)
+        registry.consume("thread-2", 10000, 5000)
+
+        response = test_client.get("/api/v1/usage/threads")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["count"] == 2
+
+        # Threads sorted by percent used (descending)
+        threads = data["threads"]
+        assert threads[0]["percentUsed"] >= threads[1]["percentUsed"]
+
+        # Find thread-2 (should have higher usage)
+        thread2 = next(t for t in threads if t["threadId"] == "thread-2")
+        assert thread2["totalTokens"] == 15000
+        assert thread2["promptTokens"] == 10000
+        assert thread2["completionTokens"] == 5000
+
+    def test_get_single_thread_budget(self, test_client):
+        """Test GET /api/v1/usage/threads/{thread_id}."""
+        from xml_pipeline.message_bus import get_budget_registry, reset_budget_registry
+
+        reset_budget_registry()
+        registry = get_budget_registry()
+        registry.consume("my-thread", 3000, 1500)
+
+        response = test_client.get("/api/v1/usage/threads/my-thread")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["threadId"] == "my-thread"
+        assert data["totalTokens"] == 4500
+        assert data["promptTokens"] == 3000
+        assert data["completionTokens"] == 1500
+        assert data["maxTokens"] == 100000  # default
+        assert data["remaining"] == 95500
+        assert data["percentUsed"] == 4.5
+        assert data["isExhausted"] is False
+
+    def test_get_single_thread_budget_not_found(self, test_client):
+        """Test GET /usage/threads/{id} returns 404 for unknown thread."""
+        from xml_pipeline.message_bus import reset_budget_registry
+
+        reset_budget_registry()
+
+        response = test_client.get("/api/v1/usage/threads/nonexistent")
+        assert response.status_code == 404
+
+    def test_get_agent_usage(self, test_client):
+        """Test GET /api/v1/usage/agents/{agent_id}."""
+        from xml_pipeline.llm import get_usage_tracker, reset_usage_tracker
+
+        reset_usage_tracker()
+        tracker = get_usage_tracker()
+
+        tracker.record(
+            thread_id="t1",
+            agent_id="researcher",
+            model="grok-4.1",
+            provider="xai",
+            prompt_tokens=1000,
+            completion_tokens=500,
+            latency_ms=100.0,
+        )
+        tracker.record(
+            thread_id="t2",
+            agent_id="researcher",
+            model="grok-4.1",
+            provider="xai",
+            prompt_tokens=2000,
+            completion_tokens=1000,
+            latency_ms=150.0,
+        )
+
+        response = test_client.get("/api/v1/usage/agents/researcher")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["agentId"] == "researcher"
+        assert data["totalTokens"] == 4500
+        assert data["promptTokens"] == 3000
+        assert data["completionTokens"] == 1500
+        assert data["requestCount"] == 2
+
+    def test_get_agent_usage_empty(self, test_client):
+        """Test GET /usage/agents/{id} for agent with no usage."""
+        from xml_pipeline.llm import reset_usage_tracker
+
+        reset_usage_tracker()
+
+        response = test_client.get("/api/v1/usage/agents/unknown")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["agentId"] == "unknown"
+        assert data["totalTokens"] == 0
+        assert data["requestCount"] == 0
+
+    def test_get_model_usage(self, test_client):
+        """Test GET /api/v1/usage/models/{model}."""
+        from xml_pipeline.llm import get_usage_tracker, reset_usage_tracker
+
+        reset_usage_tracker()
+        tracker = get_usage_tracker()
+
+        tracker.record(
+            thread_id="t1",
+            agent_id="a1",
+            model="claude-sonnet-4",
+            provider="anthropic",
+            prompt_tokens=500,
+            completion_tokens=200,
+            latency_ms=80.0,
+        )
+
+        response = test_client.get("/api/v1/usage/models/claude-sonnet-4")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["model"] == "claude-sonnet-4"
+        assert data["totalTokens"] == 700
+        assert data["requestCount"] == 1
+
+    def test_reset_usage(self, test_client):
+        """Test POST /api/v1/usage/reset."""
+        from xml_pipeline.llm import get_usage_tracker
+
+        tracker = get_usage_tracker()
+        tracker.record(
+            thread_id="t1",
+            agent_id="a1",
+            model="test",
+            provider="test",
+            prompt_tokens=1000,
+            completion_tokens=500,
+            latency_ms=100.0,
+        )
+
+        response = test_client.post("/api/v1/usage/reset")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["success"] is True
+
+        # Verify usage was reset
+        response = test_client.get("/api/v1/usage")
+        data = response.json()
+        assert data["usage"]["totals"]["totalTokens"] == 0
+        assert data["usage"]["totals"]["requestCount"] == 0
+
+    def test_usage_cost_estimation(self, test_client):
+        """Test that usage includes cost estimates."""
+        from xml_pipeline.llm import get_usage_tracker, reset_usage_tracker
+
+        reset_usage_tracker()
+        tracker = get_usage_tracker()
+
+        # Use known model with pricing
+        tracker.record(
+            thread_id="t1",
+            agent_id="a1",
+            model="grok-4.1",  # $3/M prompt, $15/M completion
+            provider="xai",
+            prompt_tokens=1_000_000,  # $3
+            completion_tokens=1_000_000,  # $15
+            latency_ms=100.0,
+        )
+
+        response = test_client.get("/api/v1/usage")
+        data = response.json()
+
+        # Cost should be approximately $18
+        assert data["usage"]["totals"]["totalCost"] == 18.0

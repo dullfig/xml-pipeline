@@ -294,3 +294,77 @@ class CapabilityListResponse(CamelModel):
 
     capabilities: List[CapabilityInfo]
     count: int
+
+
+# =============================================================================
+# Usage/Gas Tracking Models
+# =============================================================================
+
+
+class UsageTotals(CamelModel):
+    """Aggregate usage statistics."""
+
+    total_tokens: int = Field(0, alias="totalTokens")
+    prompt_tokens: int = Field(0, alias="promptTokens")
+    completion_tokens: int = Field(0, alias="completionTokens")
+    request_count: int = Field(0, alias="requestCount")
+    total_cost: float = Field(0.0, alias="totalCost")
+    avg_latency_ms: float = Field(0.0, alias="avgLatencyMs")
+
+
+class ThreadBudgetInfo(CamelModel):
+    """Token budget info for a thread."""
+
+    thread_id: str = Field(alias="threadId")
+    max_tokens: int = Field(alias="maxTokens")
+    prompt_tokens: int = Field(alias="promptTokens")
+    completion_tokens: int = Field(alias="completionTokens")
+    total_tokens: int = Field(alias="totalTokens")
+    remaining: int
+    percent_used: float = Field(alias="percentUsed")
+    is_exhausted: bool = Field(alias="isExhausted")
+
+
+class AgentUsageInfo(CamelModel):
+    """Usage info for a specific agent."""
+
+    agent_id: str = Field(alias="agentId")
+    total_tokens: int = Field(0, alias="totalTokens")
+    prompt_tokens: int = Field(0, alias="promptTokens")
+    completion_tokens: int = Field(0, alias="completionTokens")
+    request_count: int = Field(0, alias="requestCount")
+    total_cost: float = Field(0.0, alias="totalCost")
+
+
+class ModelUsageInfo(CamelModel):
+    """Usage info for a specific model."""
+
+    model: str
+    total_tokens: int = Field(0, alias="totalTokens")
+    prompt_tokens: int = Field(0, alias="promptTokens")
+    completion_tokens: int = Field(0, alias="completionTokens")
+    request_count: int = Field(0, alias="requestCount")
+    total_cost: float = Field(0.0, alias="totalCost")
+
+
+class UsageOverview(CamelModel):
+    """Complete usage overview (gas gauge)."""
+
+    totals: UsageTotals
+    by_agent: List[AgentUsageInfo] = Field(default_factory=list, alias="byAgent")
+    by_model: List[ModelUsageInfo] = Field(default_factory=list, alias="byModel")
+    active_threads: int = Field(0, alias="activeThreads")
+
+
+class UsageResponse(CamelModel):
+    """Response for GET /usage."""
+
+    usage: UsageOverview
+
+
+class ThreadBudgetListResponse(CamelModel):
+    """Response for GET /usage/threads."""
+
+    threads: List[ThreadBudgetInfo]
+    count: int
+    default_max_tokens: int = Field(alias="defaultMaxTokens")

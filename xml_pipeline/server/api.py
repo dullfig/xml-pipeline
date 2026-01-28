@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from xml_pipeline.server.models import (
     AgentInfo,
     AgentListResponse,
+    AgentUsageInfo,
     CapabilityDetail,
     CapabilityInfo,
     CapabilityListResponse,
@@ -25,10 +26,16 @@ from xml_pipeline.server.models import (
     InjectRequest,
     InjectResponse,
     MessageListResponse,
+    ModelUsageInfo,
     OrganismInfo,
+    ThreadBudgetInfo,
+    ThreadBudgetListResponse,
     ThreadInfo,
     ThreadListResponse,
     ThreadStatus,
+    UsageOverview,
+    UsageResponse,
+    UsageTotals,
 )
 
 if TYPE_CHECKING:
@@ -232,6 +239,191 @@ def create_router(state: "ServerState") -> APIRouter:
             offset=offset,
             limit=limit,
         )
+
+    # =========================================================================
+    # Usage/Gas Tracking Endpoints
+    # =========================================================================
+
+    @router.get("/usage", response_model=UsageResponse)
+    async def get_usage() -> UsageResponse:
+        """
+        Get usage overview (gas gauge).
+
+        Returns aggregate token usage, costs, and per-agent/model breakdowns.
+        This is the main endpoint for monitoring LLM consumption.
+        """
+        from xml_pipeline.llm import get_usage_tracker
+        from xml_pipeline.message_bus import get_budget_registry
+
+        tracker = get_usage_tracker()
+        budget_registry = get_budget_registry()
+
+        # Get aggregate totals
+        totals_dict = tracker.get_totals()
+        totals = UsageTotals(
+            total_tokens=totals_dict["total_tokens"],
+            prompt_tokens=totals_dict["prompt_tokens"],
+            completion_tokens=totals_dict["completion_tokens"],
+            request_count=totals_dict["request_count"],
+            total_cost=totals_dict["total_cost"],
+            avg_latency_ms=totals_dict["avg_latency_ms"],
+        )
+
+        # Get per-agent breakdown
+        agent_totals = tracker.get_all_agent_totals()
+        by_agent = [
+            AgentUsageInfo(
+                agent_id=agent_id,
+                total_tokens=data["total_tokens"],
+                prompt_tokens=data["prompt_tokens"],
+                completion_tokens=data["completion_tokens"],
+                request_count=data["request_count"],
+                total_cost=data["total_cost"],
+            )
+            for agent_id, data in agent_totals.items()
+        ]
+
+        # Get per-model breakdown
+        model_totals = tracker.get_all_model_totals()
+        by_model = [
+            ModelUsageInfo(
+                model=model,
+                total_tokens=data["total_tokens"],
+                prompt_tokens=data["prompt_tokens"],
+                completion_tokens=data["completion_tokens"],
+                request_count=data["request_count"],
+                total_cost=data["total_cost"],
+            )
+            for model, data in model_totals.items()
+        ]
+
+        # Count active threads with budgets
+        all_budgets = budget_registry.get_all_usage()
+        active_threads = len(all_budgets)
+
+        overview = UsageOverview(
+            totals=totals,
+            by_agent=by_agent,
+            by_model=by_model,
+            active_threads=active_threads,
+        )
+
+        return UsageResponse(usage=overview)
+
+    @router.get("/usage/threads", response_model=ThreadBudgetListResponse)
+    async def get_thread_budgets() -> ThreadBudgetListResponse:
+        """
+        Get token budgets for all active threads.
+
+        Shows remaining budget per thread for monitoring runaway agents.
+        """
+        from xml_pipeline.message_bus import get_budget_registry
+
+        registry = get_budget_registry()
+        all_budgets = registry.get_all_usage()
+
+        threads = []
+        for thread_id, budget_dict in all_budgets.items():
+            max_tokens = budget_dict["max_tokens"]
+            total = budget_dict["total_tokens"]
+            percent = (total / max_tokens * 100) if max_tokens > 0 else 0
+
+            threads.append(
+                ThreadBudgetInfo(
+                    thread_id=thread_id,
+                    max_tokens=max_tokens,
+                    prompt_tokens=budget_dict["prompt_tokens"],
+                    completion_tokens=budget_dict["completion_tokens"],
+                    total_tokens=total,
+                    remaining=budget_dict["remaining"],
+                    percent_used=round(percent, 1),
+                    is_exhausted=budget_dict["remaining"] <= 0,
+                )
+            )
+
+        # Sort by percent used (descending) - hottest threads first
+        threads.sort(key=lambda t: t.percent_used, reverse=True)
+
+        return ThreadBudgetListResponse(
+            threads=threads,
+            count=len(threads),
+            default_max_tokens=registry._max_tokens_per_thread,
+        )
+
+    @router.get("/usage/threads/{thread_id}", response_model=ThreadBudgetInfo)
+    async def get_thread_budget(thread_id: str) -> ThreadBudgetInfo:
+        """Get token budget for a specific thread."""
+        from xml_pipeline.message_bus import get_budget_registry
+
+        registry = get_budget_registry()
+        budget_dict = registry.get_usage(thread_id)
+
+        if budget_dict is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No budget found for thread: {thread_id}",
+            )
+
+        max_tokens = budget_dict["max_tokens"]
+        total = budget_dict["total_tokens"]
+        percent = (total / max_tokens * 100) if max_tokens > 0 else 0
+
+        return ThreadBudgetInfo(
+            thread_id=thread_id,
+            max_tokens=max_tokens,
+            prompt_tokens=budget_dict["prompt_tokens"],
+            completion_tokens=budget_dict["completion_tokens"],
+            total_tokens=total,
+            remaining=budget_dict["remaining"],
+            percent_used=round(percent, 1),
+            is_exhausted=budget_dict["remaining"] <= 0,
+        )
+
+    @router.get("/usage/agents/{agent_id}")
+    async def get_agent_usage(agent_id: str) -> AgentUsageInfo:
+        """Get usage totals for a specific agent."""
+        from xml_pipeline.llm import get_usage_tracker
+
+        tracker = get_usage_tracker()
+        data = tracker.get_agent_totals(agent_id)
+
+        return AgentUsageInfo(
+            agent_id=agent_id,
+            total_tokens=data["total_tokens"],
+            prompt_tokens=data["prompt_tokens"],
+            completion_tokens=data["completion_tokens"],
+            request_count=data["request_count"],
+            total_cost=data["total_cost"],
+        )
+
+    @router.get("/usage/models/{model}")
+    async def get_model_usage(model: str) -> ModelUsageInfo:
+        """Get usage totals for a specific model."""
+        from xml_pipeline.llm import get_usage_tracker
+
+        tracker = get_usage_tracker()
+        data = tracker.get_model_totals(model)
+
+        return ModelUsageInfo(
+            model=model,
+            total_tokens=data["total_tokens"],
+            prompt_tokens=data["prompt_tokens"],
+            completion_tokens=data["completion_tokens"],
+            request_count=data["request_count"],
+            total_cost=data["total_cost"],
+        )
+
+    @router.post("/usage/reset")
+    async def reset_usage() -> dict:
+        """
+        Reset all usage tracking (for testing/development).
+
+        WARNING: This clears all usage history. Use with caution.
+        """
+        from xml_pipeline.llm import reset_usage_tracker
+
+        reset_usage_tracker()
+        return {"success": True, "message": "Usage tracking reset"}
 
     # =========================================================================
     # Control Endpoints
