@@ -571,3 +571,64 @@ class TestLLMRouterBudgetIntegration:
         )
 
         assert response.content == "Hello!"
+
+
+# ============================================================================
+# Budget Cleanup Tests
+# ============================================================================
+
+class TestBudgetCleanup:
+    """Test budget cleanup when threads complete."""
+
+    @pytest.fixture(autouse=True)
+    def reset_all(self):
+        """Reset all global registries."""
+        reset_budget_registry()
+        yield
+        reset_budget_registry()
+
+    def test_cleanup_thread_returns_budget(self):
+        """cleanup_thread should return the budget before removing it."""
+        registry = ThreadBudgetRegistry()
+        registry.consume("thread-1", prompt_tokens=500, completion_tokens=200)
+
+        final = registry.cleanup_thread("thread-1")
+
+        assert final is not None
+        assert final.prompt_tokens == 500
+        assert final.completion_tokens == 200
+        assert final.total_tokens == 700
+
+    def test_cleanup_thread_removes_budget(self):
+        """cleanup_thread should remove the budget from registry."""
+        registry = ThreadBudgetRegistry()
+        registry.consume("thread-1", prompt_tokens=500, completion_tokens=200)
+
+        registry.cleanup_thread("thread-1")
+
+        # Budget should no longer exist
+        assert not registry.has_budget("thread-1")
+        assert registry.get_usage("thread-1") is None
+
+    def test_cleanup_nonexistent_thread_returns_none(self):
+        """cleanup_thread for unknown thread should return None."""
+        registry = ThreadBudgetRegistry()
+
+        result = registry.cleanup_thread("nonexistent")
+
+        assert result is None
+
+    def test_global_cleanup(self):
+        """Test cleanup via global registry."""
+        configure_budget_registry(max_tokens_per_thread=10000)
+        registry = get_budget_registry()
+
+        # Consume some tokens
+        registry.consume("test-thread", prompt_tokens=1000, completion_tokens=500)
+        assert registry.has_budget("test-thread")
+
+        # Cleanup
+        final = registry.cleanup_thread("test-thread")
+
+        assert final.total_tokens == 1500
+        assert not registry.has_budget("test-thread")

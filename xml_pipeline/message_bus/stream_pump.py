@@ -44,6 +44,7 @@ from xml_pipeline.message_bus.steps.thread_assignment import thread_assignment_s
 from xml_pipeline.message_bus.message_state import MessageState, HandlerMetadata, HandlerResponse, SystemError, ROUTING_ERROR
 from xml_pipeline.message_bus.thread_registry import get_registry
 from xml_pipeline.message_bus.todo_registry import get_todo_registry
+from xml_pipeline.message_bus.budget_registry import get_budget_registry
 from xml_pipeline.memory import get_context_buffer
 
 pump_logger = logging.getLogger(__name__)
@@ -681,6 +682,15 @@ class StreamPump:
 
                     # None means "no response needed" - don't re-inject
                     if response is None:
+                        # Thread terminates here - cleanup budget
+                        budget_registry = get_budget_registry()
+                        final_budget = budget_registry.cleanup_thread(current_thread)
+                        if final_budget:
+                            pump_logger.debug(
+                                f"Thread {current_thread[:8]}... completed: "
+                                f"{final_budget.total_tokens} tokens used"
+                            )
+
                         # Emit idle state
                         self._emit_event(AgentStateEvent(
                             agent_name=listener.name,
@@ -698,6 +708,14 @@ class StreamPump:
                             target, new_thread_id = registry.prune_for_response(current_thread)
                             if target is None:
                                 # Chain exhausted - nowhere to respond to
+                                # Cleanup thread budget
+                                budget_registry = get_budget_registry()
+                                final_budget = budget_registry.cleanup_thread(current_thread)
+                                if final_budget:
+                                    pump_logger.debug(
+                                        f"Thread {current_thread[:8]}... chain exhausted: "
+                                        f"{final_budget.total_tokens} tokens used"
+                                    )
                                 continue
                             to_id = target
                             thread_id = new_thread_id
