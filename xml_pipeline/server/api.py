@@ -259,9 +259,21 @@ def create_router(state: "ServerState") -> APIRouter:
 
     @router.post("/organism/reload")
     async def reload_config() -> dict:
-        """Hot-reload organism configuration."""
-        # TODO: Implement hot-reload
-        return {"success": False, "error": "Hot-reload not yet implemented"}
+        """
+        Hot-reload organism configuration.
+
+        Re-reads organism.yaml and updates listeners:
+        - New listeners are registered
+        - Removed listeners are unregistered
+        - Changed listeners are updated
+        """
+        result = await state.reload_config()
+        if not result["success"]:
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error", "Reload failed"),
+            )
+        return result
 
     @router.post("/organism/stop")
     async def stop_organism() -> dict:

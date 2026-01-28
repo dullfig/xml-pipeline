@@ -222,6 +222,60 @@ class ServerState:
         """Mark organism as stopping."""
         self._status = OrganismStatus.STOPPING
 
+    async def reload_config(self, config_path: Optional[str] = None) -> dict:
+        """
+        Hot-reload organism configuration.
+
+        Calls pump.reload_config() and updates local agent state.
+
+        Args:
+            config_path: Optional path to config file (uses stored path if not provided)
+
+        Returns:
+            Dict with reload results
+        """
+        from xml_pipeline.message_bus import ReloadEvent
+
+        # Call pump's reload
+        event = self.pump.reload_config(config_path)
+
+        if event.success:
+            # Refresh agent states from pump
+            async with self._lock:
+                # Remove agents that were removed from pump
+                for name in event.removed_listeners:
+                    if name in self._agents:
+                        del self._agents[name]
+
+                # Add/update agents
+                for name in event.added_listeners + event.updated_listeners:
+                    listener = self.pump.listeners.get(name)
+                    if listener:
+                        self._agents[name] = AgentRuntimeState(
+                            name=name,
+                            description=listener.description,
+                            is_agent=listener.is_agent,
+                            peers=list(listener.peers),
+                            payload_class=f"{listener.payload_class.__module__}.{listener.payload_class.__name__}",
+                        )
+
+            # Notify subscribers of reload
+            await self._broadcast({
+                "event": "reload",
+                "success": True,
+                "added": event.added_listeners,
+                "removed": event.removed_listeners,
+                "updated": event.updated_listeners,
+            })
+
+        return {
+            "success": event.success,
+            "added": event.added_listeners,
+            "removed": event.removed_listeners,
+            "updated": event.updated_listeners,
+            "error": event.error,
+        }
+
     # =========================================================================
     # Event Recording (called by pump hooks)
     # =========================================================================

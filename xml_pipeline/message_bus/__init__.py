@@ -39,6 +39,7 @@ from xml_pipeline.message_bus.stream_pump import (
     MessageSentEvent,
     AgentStateEvent,
     ThreadEvent,
+    ReloadEvent,
 )
 
 from xml_pipeline.message_bus.message_state import (
@@ -83,6 +84,7 @@ __all__ = [
     "MessageSentEvent",
     "AgentStateEvent",
     "ThreadEvent",
+    "ReloadEvent",
     # Message state
     "MessageState",
     "HandlerMetadata",

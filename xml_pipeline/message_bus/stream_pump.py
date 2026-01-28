@@ -96,6 +96,16 @@ class ThreadEvent(PumpEvent):
     error: Optional[str] = None
 
 
+@dataclass
+class ReloadEvent(PumpEvent):
+    """Fired when organism configuration is reloaded."""
+    success: bool
+    added_listeners: List[str] = field(default_factory=list)
+    removed_listeners: List[str] = field(default_factory=list)
+    updated_listeners: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+
 EventCallback = Callable[[PumpEvent], None]
 
 
@@ -253,8 +263,9 @@ class StreamPump:
     shared backend (Redis or Manager) for cross-process data access.
     """
 
-    def __init__(self, config: OrganismConfig):
+    def __init__(self, config: OrganismConfig, config_path: str = ""):
         self.config = config
+        self.config_path = config_path  # Store path for hot-reload
 
         # Message queue feeds the stream
         self.queue: asyncio.Queue[MessageState] = asyncio.Queue()
@@ -1111,6 +1122,119 @@ class StreamPump:
             pump_logger.info("ProcessPool shutdown complete")
             self._process_pool = None
 
+    def reload_config(self, config_path: Optional[str] = None) -> ReloadEvent:
+        """
+        Hot-reload organism configuration.
+
+        Re-reads the config file and updates listeners:
+        - New listeners are registered
+        - Removed listeners are unregistered
+        - Changed listeners are updated (handler, peers, description)
+
+        Args:
+            config_path: Path to config file. Uses stored path if not provided.
+
+        Returns:
+            ReloadEvent with details of what changed
+        """
+        path = config_path or self.config_path
+        if not path:
+            return ReloadEvent(
+                success=False,
+                error="No config path available for reload",
+            )
+
+        try:
+            # Re-read config
+            new_config = ConfigLoader.load(path)
+
+            # Track changes
+            added: List[str] = []
+            removed: List[str] = []
+            updated: List[str] = []
+
+            # Get current listener names (excluding system listeners)
+            current_names = {
+                name for name in self.listeners.keys()
+                if not name.startswith("system.")
+            }
+
+            # Get new listener names
+            new_names = {lc.name for lc in new_config.listeners}
+
+            # Find removed listeners
+            for name in current_names - new_names:
+                if self.unregister_listener(name):
+                    removed.append(name)
+                    pump_logger.info(f"Hot-reload: removed listener '{name}'")
+
+            # Find new and updated listeners
+            for lc in new_config.listeners:
+                # Resolve imports for the listener config
+                ConfigLoader._resolve_imports(lc)
+
+                if lc.name in current_names:
+                    # Check if changed
+                    existing = self.listeners.get(lc.name)
+                    if existing and self._listener_changed(existing, lc):
+                        # Remove old and re-register
+                        self.unregister_listener(lc.name)
+                        self.register_listener(lc)
+                        updated.append(lc.name)
+                        pump_logger.info(f"Hot-reload: updated listener '{lc.name}'")
+                else:
+                    # New listener
+                    self.register_listener(lc)
+                    added.append(lc.name)
+                    pump_logger.info(f"Hot-reload: added listener '{lc.name}'")
+
+            # Rebuild usage instructions for all agents (peers may have changed)
+            for listener in self.listeners.values():
+                if listener.is_agent and listener.peers:
+                    listener.usage_instructions = self._build_usage_instructions(listener)
+
+            # Update stored config
+            self.config = new_config
+
+            # Emit reload event
+            event = ReloadEvent(
+                success=True,
+                added_listeners=added,
+                removed_listeners=removed,
+                updated_listeners=updated,
+            )
+            self._emit_event(event)
+
+            pump_logger.info(
+                f"Hot-reload complete: +{len(added)} -{len(removed)} ~{len(updated)}"
+            )
+            return event
+
+        except Exception as e:
+            pump_logger.error(f"Hot-reload failed: {e}")
+            event = ReloadEvent(success=False, error=str(e))
+            self._emit_event(event)
+            return event
+
+    def _listener_changed(self, existing: Listener, new_config: ListenerConfig) -> bool:
+        """Check if listener config has changed."""
+        # Compare key fields
+        if existing.handler != new_config.handler:
+            return True
+        if existing.payload_class != new_config.payload_class:
+            return True
+        if existing.description != new_config.description:
+            return True
+        if existing.is_agent != new_config.is_agent:
+            return True
+        if set(existing.peers) != set(new_config.peers):
+            return True
+        if existing.broadcast != new_config.broadcast:
+            return True
+        if existing.cpu_bound != new_config.cpu_bound:
+            return True
+        return False
+
 
 # ============================================================================
 # Config Loader (same as before)
@@ -1208,7 +1332,7 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
     print(f"Organism: {config.name}")
     print(f"Listeners: {len(config.listeners)}")
 
-    pump = StreamPump(config)
+    pump = StreamPump(config, config_path=config_path)
 
     # Register system listeners first
     boot_listener_config = ListenerConfig(
