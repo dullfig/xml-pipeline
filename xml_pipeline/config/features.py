@@ -16,7 +16,7 @@ def _check_import(module: str) -> bool:
 
 
 # Feature registry: feature_name -> (check_function, description)
-# Note: auth, server, lsp moved to Nextra (proprietary)
+# Note: auth, lsp moved to OpenBlox (https://openblox.ai)
 FEATURES: dict[str, tuple[Callable[[], bool], str]] = {
     "anthropic": (lambda: _check_import("anthropic"), "Anthropic Claude SDK"),
     "openai": (lambda: _check_import("openai"), "OpenAI SDK"),
@@ -79,7 +79,7 @@ def check_features(config) -> FeatureCheck:
         # This would need more sophisticated detection based on tool config
         pass
 
-    # Note: auth/server config sections are read but implemented in Nextra
+    # Note: auth config section is read but implemented in OpenBlox
 
     return result
 

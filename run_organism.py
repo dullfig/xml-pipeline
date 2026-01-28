@@ -2,13 +2,16 @@
 """
 run_organism.py — Deprecated entry point.
 
-The TUI console and server have been moved to the Nextra SaaS product.
+The TUI console has been moved to OpenBlox (https://openblox.ai).
 This file is kept for backwards compatibility but will display a helpful message.
 
 For the open-source xml-pipeline, use the CLI or programmatic API:
 
-    # CLI
+    # CLI - run organism
     xml-pipeline run config/organism.yaml
+
+    # CLI - run with API server
+    xml-pipeline serve config/organism.yaml --port 8080
 
     # Programmatic
     from xml_pipeline.message_bus import bootstrap
@@ -19,8 +22,7 @@ For the open-source xml-pipeline, use the CLI or programmatic API:
     pip install xml-pipeline[console]
     python -m examples.console
 
-For the full TUI console with authentication and WebSocket server,
-see the Nextra project.
+For the full TUI console with authentication, see OpenBlox.
 """
 
 import sys
@@ -29,28 +31,30 @@ import sys
 def main() -> None:
     """Show deprecation message and exit."""
     print("""
-xml-pipeline: TUI Console Moved to Nextra
-==========================================
+xml-pipeline: TUI Console Moved to OpenBlox
+============================================
 
-The interactive TUI console with authentication and WebSocket server
-has been moved to the Nextra SaaS product (v0.4.0).
+The interactive TUI console with authentication has been moved to
+OpenBlox (https://openblox.ai).
 
 For the open-source xml-pipeline, use:
 
-  1. CLI command:
+  1. CLI command (organism only):
      xml-pipeline run config/organism.yaml
 
-  2. Programmatic API:
+  2. CLI with API server:
+     xml-pipeline serve config/organism.yaml --port 8080
+
+  3. Programmatic API:
      from xml_pipeline.message_bus import bootstrap
      pump = await bootstrap("organism.yaml")
      await pump.run()
 
-  3. Console example (for testing):
+  4. Console example (for testing):
      pip install xml-pipeline[console]
      python -m examples.console
 
-For full TUI console, authentication, and WebSocket server features,
-see the Nextra project.
+For full TUI console and authentication features, see OpenBlox.
 """)
     sys.exit(1)
 

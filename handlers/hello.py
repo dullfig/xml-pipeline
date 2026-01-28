@@ -124,6 +124,6 @@ async def handle_response_print(payload: ShoutedResponse, metadata: HandlerMetad
     """
     Print the final response to the console.
 
-    Note: TUI console is available in Nextra. This handler uses simple stdout.
+    Note: TUI console is available in OpenBlox. This handler uses simple stdout.
     """
     print(f"\033[36m[response] {payload.message}\033[0m")

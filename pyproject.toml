@@ -1,7 +1,7 @@
 # pyproject.toml — OSS xml-pipeline library
 #
 # This is the open-source core: message pump, handlers, LLM abstraction, tools.
-# Advanced features (TUI console, LSP, auth, WebSocket server) are in Nextra.
+# Advanced features (TUI console, LSP, auth) are in OpenBlox (https://openblox.ai).
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]

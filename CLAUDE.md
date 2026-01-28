@@ -17,7 +17,7 @@ A tamper-proof nervous system for multi-agent AI systems using XML as the sovere
 | HTTP | httpx | 0.27+ | LLM backend communication |
 | Case conversion | pyhumps | Latest | Snake/camel case conversion |
 
-> **Note:** TUI console, authentication, and WebSocket server are available in the Nextra SaaS product.
+> **Note:** TUI console and authentication are available in [OpenBlox](https://openblox.ai).
 
 ## Quick Start
 
@@ -88,8 +88,7 @@ xml-pipeline/
 └── pyproject.toml            # Project metadata and dependencies
 ```
 
-> **Note:** Authentication (`auth/`), TUI console (`console/`), and WebSocket server (`server/`)
-> are available in the Nextra SaaS product.
+> **Note:** Authentication (`auth/`) and TUI console (`console/`) are available in [OpenBlox](https://openblox.ai).
 
 ## Architecture Overview
 
@@ -312,7 +311,7 @@ pip install xml-pipeline[all]
 pip install xml-pipeline[dev]
 ```
 
-> **Note:** Authentication and WebSocket server features are available in the Nextra SaaS product.
+> **Note:** Authentication features are available in [OpenBlox](https://openblox.ai).
 
 ## Native Tools
 
@@ -354,7 +353,7 @@ Built-in message types in `xml_pipeline/primitives/`:
 - @docs/split-config.md — Split configuration architecture
 - @docs/why-not-json.md — Rationale for XML over JSON
 
-> **Note:** Console, authentication, and LSP integration documentation is in the Nextra project.
+> **Note:** Console, authentication, and LSP integration documentation is in [OpenBlox](https://openblox.ai).
 
 
 ## Skill Usage Guide
