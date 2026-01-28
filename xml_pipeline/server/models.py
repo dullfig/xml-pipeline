@@ -259,3 +259,38 @@ class ErrorResponse(CamelModel):
 
     error: str
     detail: Optional[str] = None
+
+
+# =============================================================================
+# Capability/Introspection Models
+# =============================================================================
+
+
+class CapabilityInfo(CamelModel):
+    """Basic capability info for listing."""
+
+    name: str
+    description: str
+    is_agent: bool = Field(alias="isAgent")
+    peers: List[str] = Field(default_factory=list)
+    root_tag: str = Field(alias="rootTag")
+
+
+class CapabilityDetail(CamelModel):
+    """Detailed capability info including schema."""
+
+    name: str
+    description: str
+    is_agent: bool = Field(alias="isAgent")
+    peers: List[str] = Field(default_factory=list)
+    root_tag: str = Field(alias="rootTag")
+    payload_class: str = Field(alias="payloadClass")
+    schema_xsd: Optional[str] = Field(None, alias="schemaXsd")
+    example_xml: Optional[str] = Field(None, alias="exampleXml")
+
+
+class CapabilityListResponse(CamelModel):
+    """Response for GET /capabilities."""
+
+    capabilities: List[CapabilityInfo]
+    count: int

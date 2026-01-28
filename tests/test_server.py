@@ -42,12 +42,15 @@ class MockListener:
     peers: List[str] = None
     payload_class: type = None
     schema: Any = None
+    root_tag: str = ""
 
     def __post_init__(self):
         if self.peers is None:
             self.peers = []
         if self.payload_class is None:
             self.payload_class = type("MockPayload", (), {"__module__": "test", "__name__": "MockPayload"})
+        if not self.root_tag:
+            self.root_tag = f"{self.name.lower()}.mockpayload"
 
 
 @dataclass
@@ -508,3 +511,108 @@ class TestWebSocket:
             data = websocket.receive_json()
             assert data["event"] == "subscribed"
             assert "filter" in data
+
+
+# ============================================================================
+# Test Capability Introspection
+# ============================================================================
+
+class TestCapabilityIntrospection:
+    """Test capability introspection endpoints."""
+
+    def test_list_capabilities(self, test_client):
+        """Test GET /capabilities lists all registered listeners."""
+        response = test_client.get("/api/v1/capabilities")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "capabilities" in data
+        assert "count" in data
+        assert data["count"] == 2  # greeter and shouter
+
+        names = [c["name"] for c in data["capabilities"]]
+        assert "greeter" in names
+        assert "shouter" in names
+
+    def test_list_capabilities_includes_details(self, test_client):
+        """Test capability listing includes required fields."""
+        response = test_client.get("/api/v1/capabilities")
+        data = response.json()
+
+        # Find greeter
+        greeter = next(c for c in data["capabilities"] if c["name"] == "greeter")
+
+        assert "description" in greeter
+        assert "isAgent" in greeter
+        assert greeter["isAgent"] is True
+        assert "peers" in greeter
+        assert "shouter" in greeter["peers"]
+        assert "rootTag" in greeter
+
+    def test_list_capabilities_sorted(self, test_client):
+        """Test capabilities are sorted by name."""
+        response = test_client.get("/api/v1/capabilities")
+        data = response.json()
+
+        names = [c["name"] for c in data["capabilities"]]
+        assert names == sorted(names)
+
+    def test_get_capability_detail(self, test_client):
+        """Test GET /capabilities/{name} returns detailed info."""
+        response = test_client.get("/api/v1/capabilities/greeter")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["name"] == "greeter"
+        assert data["description"] == "Greeting agent"
+        assert data["isAgent"] is True
+        assert "shouter" in data["peers"]
+        assert "payloadClass" in data
+        assert "rootTag" in data
+
+    def test_get_capability_includes_example(self, test_client):
+        """Test capability detail includes example XML."""
+        response = test_client.get("/api/v1/capabilities/greeter")
+        data = response.json()
+
+        # Example XML may or may not be present depending on payload class
+        assert "exampleXml" in data
+
+    def test_get_capability_not_found(self, test_client):
+        """Test GET /capabilities/{name} returns 404 for unknown capability."""
+        response = test_client.get("/api/v1/capabilities/nonexistent")
+        assert response.status_code == 404
+
+    def test_get_capability_shouter(self, test_client):
+        """Test non-agent capability details."""
+        response = test_client.get("/api/v1/capabilities/shouter")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert data["name"] == "shouter"
+        assert data["isAgent"] is False
+        assert data["peers"] == []
+
+
+class TestCapabilityIntrospectionState:
+    """Test capability introspection via ServerState."""
+
+    def test_get_capabilities_returns_list(self, server_state):
+        """Test get_capabilities returns CapabilityInfo list."""
+        capabilities = server_state.get_capabilities()
+        assert len(capabilities) == 2
+        assert all(hasattr(c, "name") for c in capabilities)
+        assert all(hasattr(c, "root_tag") for c in capabilities)
+
+    def test_get_capability_returns_detail(self, server_state):
+        """Test get_capability returns CapabilityDetail."""
+        detail = server_state.get_capability("greeter")
+        assert detail is not None
+        assert detail.name == "greeter"
+        assert detail.is_agent is True
+        assert "shouter" in detail.peers
+
+    def test_get_capability_not_found_returns_none(self, server_state):
+        """Test get_capability returns None for unknown."""
+        detail = server_state.get_capability("nonexistent")
+        assert detail is None

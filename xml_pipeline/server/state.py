@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
 from xml_pipeline.server.models import (
     AgentInfo,
     AgentState,
+    CapabilityDetail,
+    CapabilityInfo,
     MessageInfo,
     OrganismInfo,
     OrganismStatus,
@@ -414,6 +416,77 @@ class ServerState:
 
             return etree.tostring(listener.schema, encoding="unicode", pretty_print=True)
         return None
+
+    # =========================================================================
+    # Capability Introspection (for operators, not agents)
+    # =========================================================================
+
+    def get_capabilities(self) -> List[CapabilityInfo]:
+        """
+        List all registered capabilities.
+
+        This is for operator introspection via REST API.
+        Agents cannot access this - they only know their peers.
+        """
+        capabilities = []
+        for name, listener in self.pump.listeners.items():
+            capabilities.append(
+                CapabilityInfo(
+                    name=name,
+                    description=listener.description,
+                    is_agent=listener.is_agent,
+                    peers=list(listener.peers),
+                    root_tag=listener.root_tag,
+                )
+            )
+        # Sort by name for consistent ordering
+        capabilities.sort(key=lambda c: c.name)
+        return capabilities
+
+    def get_capability(self, name: str) -> Optional[CapabilityDetail]:
+        """
+        Get detailed capability info including schema.
+
+        This is for operator introspection via REST API.
+        """
+        listener = self.pump.listeners.get(name)
+        if listener is None:
+            return None
+
+        # Get XSD schema
+        schema_xsd = None
+        if listener.schema is not None:
+            from lxml import etree
+            try:
+                # Get the schema document from the XMLSchema object
+                # XMLSchema wraps an Element, we need to serialize it
+                schema_xsd = etree.tostring(
+                    listener.schema, encoding="unicode", pretty_print=True
+                )
+            except Exception:
+                pass
+
+        # Generate example XML
+        example_xml = None
+        if hasattr(listener.payload_class, '__dataclass_fields__'):
+            fields = listener.payload_class.__dataclass_fields__
+            class_name = listener.payload_class.__name__
+            lines = [f"<{class_name}>"]
+            for fname in fields:
+                lines.append(f"  <{fname}>...</{fname}>")
+            lines.append(f"</{class_name}>")
+            example_xml = "\n".join(lines)
+
+        return CapabilityDetail(
+            name=name,
+            description=listener.description,
+            is_agent=listener.is_agent,
+            peers=list(listener.peers),
+            root_tag=listener.root_tag,
+            payload_class=f"{listener.payload_class.__module__}.{listener.payload_class.__name__}",
+            schema_xsd=schema_xsd,
+            example_xml=example_xml,
+        )
 
     def get_threads(
         self,

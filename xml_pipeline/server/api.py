@@ -18,6 +18,9 @@ from fastapi import APIRouter, HTTPException, Query
 from xml_pipeline.server.models import (
     AgentInfo,
     AgentListResponse,
+    CapabilityDetail,
+    CapabilityInfo,
+    CapabilityListResponse,
     ErrorResponse,
     InjectRequest,
     InjectResponse,
@@ -49,6 +52,39 @@ def create_router(state: "ServerState") -> APIRouter:
     async def get_organism_config() -> dict:
         """Get sanitized organism configuration (no secrets)."""
         return state.get_organism_config()
+
+    # =========================================================================
+    # Capability Introspection Endpoints (for operators, not agents)
+    # =========================================================================
+
+    @router.get("/capabilities", response_model=CapabilityListResponse)
+    async def list_capabilities() -> CapabilityListResponse:
+        """
+        List all registered capabilities in the organism.
+
+        This endpoint is for operator introspection only.
+        Agents cannot access this - they only know their declared peers.
+        """
+        capabilities = state.get_capabilities()
+        return CapabilityListResponse(
+            capabilities=capabilities,
+            count=len(capabilities),
+        )
+
+    @router.get("/capabilities/{name}", response_model=CapabilityDetail)
+    async def get_capability(name: str) -> CapabilityDetail:
+        """
+        Get detailed capability info including schema and example.
+
+        This endpoint is for operator introspection only.
+        """
+        capability = state.get_capability(name)
+        if capability is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Capability not found: {name}",
+            )
+        return capability
 
     # =========================================================================
     # Agent Endpoints
