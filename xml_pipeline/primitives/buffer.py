@@ -359,7 +359,7 @@ async def _inject_buffer_item(
     )
 
     # Inject into pump
-    await pump.inject(envelope, thread_id=thread_id, from_id=from_id)
+    await pump._inject_raw(envelope, thread_id=thread_id, from_id=from_id)
 
 
 class _RawXmlPayload:

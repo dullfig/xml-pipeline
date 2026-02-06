@@ -833,6 +833,7 @@ class TestBudgetWarningInjection:
 
         mock_pump = Mock()
         mock_pump.inject = AsyncMock(side_effect=mock_inject)
+        mock_pump._inject_raw = AsyncMock(side_effect=mock_inject)
         mock_pump._wrap_in_envelope = Mock(return_value=b"<envelope>warning</envelope>")
 
         with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
@@ -877,6 +878,7 @@ class TestBudgetWarningInjection:
 
         mock_pump = Mock()
         mock_pump.inject = AsyncMock(side_effect=lambda *args, **kwargs: injected_messages.append(args))
+        mock_pump._inject_raw = AsyncMock(side_effect=lambda *args, **kwargs: injected_messages.append(args))
         mock_pump._wrap_in_envelope = Mock(return_value=b"<envelope>warning</envelope>")
 
         with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
@@ -917,6 +919,7 @@ class TestBudgetWarningInjection:
 
         mock_pump = Mock()
         mock_pump.inject = AsyncMock()
+        mock_pump._inject_raw = AsyncMock()
 
         with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
             await router.complete(
@@ -926,7 +929,7 @@ class TestBudgetWarningInjection:
             )
 
         # No warnings should be injected
-        mock_pump.inject.assert_not_called()
+        mock_pump._inject_raw.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_warning_includes_correct_severity(self):
@@ -965,6 +968,7 @@ class TestBudgetWarningInjection:
 
         mock_pump = Mock()
         mock_pump.inject = AsyncMock()
+        mock_pump._inject_raw = AsyncMock()
         mock_pump._wrap_in_envelope = Mock(side_effect=capture_wrap)
 
         with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):

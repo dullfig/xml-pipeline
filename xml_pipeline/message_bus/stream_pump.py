@@ -267,7 +267,31 @@ class StreamPump:
     shared backend (Redis or Manager) for cross-process data access.
     """
 
-    def __init__(self, config: OrganismConfig, config_path: str = ""):
+    def __init__(
+        self,
+        config: OrganismConfig | None = None,
+        config_path: str = "",
+        *,
+        name: str = "organism",
+        port: int = 8765,
+        max_tokens_per_thread: int = 100_000,
+        max_concurrent_handlers: int = 20,
+        max_concurrent_per_agent: int = 5,
+        llm_config: Dict[str, Any] | None = None,
+        identity_path: str = "",
+    ):
+        # Build config from kwargs if not provided directly
+        if config is None:
+            config = OrganismConfig(
+                name=name,
+                identity_path=identity_path,
+                port=port,
+                max_concurrent_handlers=max_concurrent_handlers,
+                max_concurrent_per_agent=max_concurrent_per_agent,
+                max_tokens_per_thread=max_tokens_per_thread,
+                llm_config=llm_config or {},
+            )
+
         self.config = config
         self.config_path = config_path  # Store path for hot-reload
 
@@ -374,6 +398,59 @@ class StreamPump:
         self.routing_table.setdefault(root_tag, []).append(listener)
         self.listeners[lc.name] = listener
         return listener
+
+    def register(
+        self,
+        name: str,
+        handler: Callable,
+        payload_class: type,
+        *,
+        description: str = "",
+        agent: bool = False,
+        peers: List[str] | None = None,
+        broadcast: bool = False,
+        prompt: str = "",
+        cpu_bound: bool = False,
+    ) -> Listener:
+        """
+        Register a listener using plain arguments (public API).
+
+        This is the preferred way to register listeners programmatically.
+        Internally constructs a ListenerConfig and delegates to
+        register_listener().
+
+        Args:
+            name: Unique listener name (e.g., "greeter", "calculator.add")
+            handler: Async handler function
+            payload_class: @xmlify dataclass defining the message contract
+            description: Human-readable description for tool prompts
+            agent: Whether this is an LLM agent (gets own_name, unique root tag)
+            peers: Allowed call targets for agents
+            broadcast: Allow multiple listeners to share root tag
+            prompt: System prompt for LLM agents
+            cpu_bound: Dispatch to ProcessPoolExecutor
+
+        Returns:
+            The registered Listener object
+        """
+        # Derive import paths from the live objects
+        payload_class_path = f"{payload_class.__module__}.{payload_class.__qualname__}"
+        handler_path = f"{handler.__module__}.{handler.__qualname__}"
+
+        lc = ListenerConfig(
+            name=name,
+            payload_class_path=payload_class_path,
+            handler_path=handler_path,
+            description=description,
+            is_agent=agent,
+            peers=peers or [],
+            broadcast=broadcast,
+            prompt=prompt,
+            cpu_bound=cpu_bound,
+            payload_class=payload_class,
+            handler=handler,
+        )
+        return self.register_listener(lc)
 
     def register_generic_listener(
         self,
@@ -521,6 +598,114 @@ class StreamPump:
         # Fallback for non-xmlified classes (e.g., in tests)
         permissive = '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:any processContents="lax"/></xs:schema>'
         return etree.XMLSchema(etree.fromstring(permissive.encode()))
+
+    # ------------------------------------------------------------------
+    # Public API: start() — full bootstrap ceremony
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """
+        Run the full bootstrap ceremony (public API).
+
+        This encapsulates everything that bootstrap() does after pump
+        creation:
+        1. Register system listeners (Boot, Todo, Sequence, Buffer)
+        2. Build usage_instructions for all agents (second pass)
+        3. Load prompts into PromptRegistry and freeze it
+        4. Configure LLM router (if llm_config provided)
+        5. Configure ThreadBudgetRegistry
+        6. Initialize root thread
+        7. Inject boot message
+
+        After this, call ``await pump.run()`` to start processing.
+        """
+        from datetime import datetime, timezone
+        from xml_pipeline.primitives import (
+            Boot, handle_boot,
+            TodoUntil, TodoComplete,
+            handle_todo_until, handle_todo_complete,
+        )
+        from xml_pipeline.primitives.sequence import (
+            SequenceStart, handle_sequence_start,
+        )
+        from xml_pipeline.primitives.buffer import (
+            BufferStart, handle_buffer_start,
+        )
+        from xml_pipeline.platform import get_prompt_registry
+        from xml_pipeline.message_bus.budget_registry import configure_budget_registry
+
+        # --- 1. System listeners ---
+        system_listeners = [
+            ("system.boot", Boot, handle_boot,
+             "System boot handler - initializes organism"),
+            ("system.todo", TodoUntil, handle_todo_until,
+             "System todo handler - registers watchers"),
+            ("system.todo-complete", TodoComplete, handle_todo_complete,
+             "System todo handler - closes watchers"),
+            ("system.sequence", SequenceStart, handle_sequence_start,
+             "System sequence handler - chains listeners in order"),
+            ("system.buffer", BufferStart, handle_buffer_start,
+             "System buffer handler - fan-out to parallel workers"),
+        ]
+        for sys_name, cls, handler, desc in system_listeners:
+            if sys_name not in self.listeners:
+                self.register(sys_name, handler, cls, description=desc)
+
+        # --- 2. Build usage_instructions (needs all listeners registered) ---
+        for listener in self.listeners.values():
+            if listener.is_agent and listener.peers:
+                listener.usage_instructions = self._build_usage_instructions(listener)
+
+        # --- 3. Prompts ---
+        prompt_registry = get_prompt_registry()
+        for listener in self.listeners.values():
+            if listener.is_agent:
+                # Find prompt from the config's listener list (if available)
+                lc = next(
+                    (l for l in self.config.listeners if l.name == listener.name),
+                    None,
+                )
+                system_prompt = lc.prompt if lc else ""
+                prompt_registry.register(
+                    agent_name=listener.name,
+                    system_prompt=system_prompt,
+                    peer_schemas=listener.usage_instructions,
+                )
+        prompt_registry.freeze()
+
+        # --- 4. LLM router ---
+        if self.config.llm_config:
+            from xml_pipeline.llm import configure_router
+            configure_router(self.config.llm_config)
+
+        # --- 5. Budget ---
+        configure_budget_registry(self.config.max_tokens_per_thread)
+
+        # --- 6. Root thread ---
+        registry = get_registry()
+        root_uuid = registry.initialize_root(self.config.name)
+
+        # --- 7. Boot message ---
+        boot_payload = Boot(
+            organism_name=self.config.name,
+            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            listener_count=len(self.listeners),
+        )
+        boot_envelope = self._wrap_in_envelope(
+            payload=boot_payload,
+            from_id="system",
+            to_id="system.boot",
+            thread_id=root_uuid,
+        )
+        await self._inject_raw(boot_envelope, thread_id=root_uuid, from_id="system")
+
+        # Set global singleton
+        set_stream_pump(self)
+
+        pump_logger.info(
+            f"Organism '{self.config.name}' started: "
+            f"{len(self.listeners)} listeners, root={root_uuid}"
+        )
 
     # ------------------------------------------------------------------
     # Stream Source
@@ -1123,8 +1308,77 @@ class StreamPump:
     # External API
     # ------------------------------------------------------------------
 
-    async def inject(self, raw_bytes: bytes, thread_id: str, from_id: str) -> None:
-        """Inject a message to start processing."""
+    async def inject(
+        self,
+        target: str | bytes,
+        payload: Any = None,
+        *,
+        from_id: str = "external",
+        thread_id: str | None = None,
+    ) -> str:
+        """
+        Inject a message into the pump (public API).
+
+        Accepts either a payload object (preferred) or raw bytes (legacy).
+
+        Args:
+            target: Target listener name, OR raw bytes for backward compat.
+            payload: @xmlify dataclass instance (required when target is str).
+            from_id: Sender identity (default "external").
+            thread_id: Thread UUID. Created automatically if not provided.
+
+        Returns:
+            The thread_id used for the message.
+
+        Examples:
+            # Preferred: payload object
+            await pump.inject("greeter", Greeting(name="Alice"))
+
+            # With explicit thread
+            await pump.inject("greeter", Greeting(name="Alice"),
+                              thread_id=my_thread)
+
+            # Legacy: raw bytes (backward compat, deprecated)
+            await pump.inject(envelope_bytes, thread_id="...", from_id="system")
+        """
+        # Backward compat: detect raw bytes as first arg
+        if isinstance(target, bytes):
+            import warnings
+            warnings.warn(
+                "inject(raw_bytes, thread_id, from_id) is deprecated. "
+                "Use inject(target, payload) or _inject_raw() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # In legacy mode, payload holds thread_id and from_id comes from kwargs
+            # But the old signature was inject(raw_bytes, thread_id, from_id)
+            # where positional: raw_bytes=target, thread_id=payload, from_id=from_id
+            legacy_thread_id = payload if isinstance(payload, str) else thread_id
+            await self._inject_raw(target, thread_id=legacy_thread_id or "", from_id=from_id)
+            return legacy_thread_id or ""
+
+        # New API: wrap payload in envelope and inject
+        if payload is None:
+            raise ValueError("payload is required when target is a listener name")
+
+        if thread_id is None:
+            registry = get_registry()
+            thread_id = registry.extend_chain(
+                registry.root_uuid or "",
+                target,
+            )
+
+        envelope_bytes = self._wrap_in_envelope(
+            payload=payload,
+            from_id=from_id,
+            to_id=target,
+            thread_id=thread_id,
+        )
+        await self._inject_raw(envelope_bytes, thread_id=thread_id, from_id=from_id)
+        return thread_id
+
+    async def _inject_raw(self, raw_bytes: bytes, thread_id: str, from_id: str) -> None:
+        """Inject raw envelope bytes into the pump (internal API)."""
         state = MessageState(
             raw_bytes=raw_bytes,
             thread_id=thread_id,
@@ -1256,6 +1510,39 @@ class StreamPump:
             return True
         return False
 
+    # ------------------------------------------------------------------
+    # Public API: from_yaml() — construct pump from config file
+    # ------------------------------------------------------------------
+
+    @classmethod
+    async def from_yaml(cls, config_path: str = "config/organism.yaml") -> "StreamPump":
+        """
+        Create a fully initialized pump from a YAML config file.
+
+        This is the highest-level entry point. It:
+        1. Loads and parses the config file
+        2. Creates the StreamPump
+        3. Registers all user-defined listeners from config
+        4. Calls start() (system listeners, prompts, boot, etc.)
+
+        After this, call ``await pump.run()`` to start processing.
+
+        Args:
+            config_path: Path to organism.yaml
+
+        Returns:
+            A fully bootstrapped StreamPump, ready for run().
+        """
+        from dotenv import load_dotenv
+
+        load_dotenv()
+
+        config = ConfigLoader.load(config_path)
+        pump = cls(config=config, config_path=config_path)
+        pump.register_all()
+        await pump.start()
+        return pump
+
 
 # ============================================================================
 # Config Loader (same as before)
@@ -1337,152 +1624,15 @@ class ConfigLoader:
 # ============================================================================
 
 async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
-    """Load config, create pump, initialize root thread, and inject boot message."""
-    from datetime import datetime, timezone
-    from dotenv import load_dotenv
-    from xml_pipeline.primitives import Boot, handle_boot
-    from xml_pipeline.primitives import (
-        TodoUntil, TodoComplete,
-        handle_todo_until, handle_todo_complete,
-    )
-    from xml_pipeline.platform import get_prompt_registry
+    """
+    Load config, create pump, initialize root thread, and inject boot message.
 
-    # Load .env file if present
-    load_dotenv()
-
-    config = ConfigLoader.load(config_path)
-    print(f"Organism: {config.name}")
-    print(f"Listeners: {len(config.listeners)}")
-
-    pump = StreamPump(config, config_path=config_path)
-
-    # Register system listeners first
-    boot_listener_config = ListenerConfig(
-        name="system.boot",
-        payload_class_path="xml_pipeline.primitives.Boot",
-        handler_path="xml_pipeline.primitives.handle_boot",
-        description="System boot handler - initializes organism",
-        is_agent=False,
-        payload_class=Boot,
-        handler=handle_boot,
-    )
-    pump.register_listener(boot_listener_config)
-
-    # Register TodoUntil handler (agents register watchers)
-    todo_until_config = ListenerConfig(
-        name="system.todo",
-        payload_class_path="xml_pipeline.primitives.TodoUntil",
-        handler_path="xml_pipeline.primitives.handle_todo_until",
-        description="System todo handler - registers watchers",
-        is_agent=False,
-        payload_class=TodoUntil,
-        handler=handle_todo_until,
-    )
-    pump.register_listener(todo_until_config)
-
-    # Register TodoComplete handler (agents close watchers)
-    todo_complete_config = ListenerConfig(
-        name="system.todo-complete",
-        payload_class_path="xml_pipeline.primitives.TodoComplete",
-        handler_path="xml_pipeline.primitives.handle_todo_complete",
-        description="System todo handler - closes watchers",
-        is_agent=False,
-        payload_class=TodoComplete,
-        handler=handle_todo_complete,
-    )
-    pump.register_listener(todo_complete_config)
-
-    # Register Sequence primitives (orchestration)
-    from xml_pipeline.primitives.sequence import (
-        SequenceStart, handle_sequence_start,
-    )
-    sequence_config = ListenerConfig(
-        name="system.sequence",
-        payload_class_path="xml_pipeline.primitives.sequence.SequenceStart",
-        handler_path="xml_pipeline.primitives.sequence.handle_sequence_start",
-        description="System sequence handler - chains listeners in order",
-        is_agent=False,
-        payload_class=SequenceStart,
-        handler=handle_sequence_start,
-    )
-    pump.register_listener(sequence_config)
-
-    # Register Buffer primitives (fan-out orchestration)
-    from xml_pipeline.primitives.buffer import (
-        BufferStart, handle_buffer_start,
-    )
-    buffer_config = ListenerConfig(
-        name="system.buffer",
-        payload_class_path="xml_pipeline.primitives.buffer.BufferStart",
-        handler_path="xml_pipeline.primitives.buffer.handle_buffer_start",
-        description="System buffer handler - fan-out to parallel workers",
-        is_agent=False,
-        payload_class=BufferStart,
-        handler=handle_buffer_start,
-    )
-    pump.register_listener(buffer_config)
-
-    # Register all user-defined listeners
-    pump.register_all()
-
-    # Load prompts into PromptRegistry (platform-managed, immutable)
-    prompt_registry = get_prompt_registry()
-    prompt_count = 0
-    for listener in pump.listeners.values():
-        if listener.is_agent:
-            # Get prompt from config (may be empty)
-            lc = next((l for l in config.listeners if l.name == listener.name), None)
-            system_prompt = lc.prompt if lc else ""
-
-            # Register prompt with peer schemas (usage_instructions)
-            prompt_registry.register(
-                agent_name=listener.name,
-                system_prompt=system_prompt,
-                peer_schemas=listener.usage_instructions,
-            )
-            prompt_count += 1
-
-    # Freeze registry - no more registrations allowed
-    prompt_registry.freeze()
-    print(f"Prompts: {prompt_count} agents registered, registry frozen")
-
-    # Configure LLM router if llm section present
-    if config.llm_config:
-        from xml_pipeline.llm import configure_router
-        configure_router(config.llm_config)
-        print(f"LLM backends: {len(config.llm_config.get('backends', []))}")
-
-    # Configure thread budget registry
-    from xml_pipeline.message_bus.budget_registry import configure_budget_registry
-    configure_budget_registry(config.max_tokens_per_thread)
-    print(f"Token budget: {config.max_tokens_per_thread:,} per thread")
-
-    # Initialize root thread in registry
-    registry = get_registry()
-    root_uuid = registry.initialize_root(config.name)
-    print(f"Root thread: {root_uuid} ({registry.root_chain})")
-
-    # Create and inject the boot message
-    boot_payload = Boot(
-        organism_name=config.name,
-        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        listener_count=len(pump.listeners),
-    )
-
-    # Wrap boot payload in envelope
-    boot_envelope = pump._wrap_in_envelope(
-        payload=boot_payload,
-        from_id="system",
-        to_id="system.boot",
-        thread_id=root_uuid,
-    )
-
-    # Inject boot message (will be processed when pump.run() is called)
-    await pump.inject(boot_envelope, thread_id=root_uuid, from_id="system")
-
-    # Set global pump instance for get_stream_pump()
-    set_stream_pump(pump)
-
+    This is a convenience wrapper around ``StreamPump.from_yaml()``.
+    Kept for backward compatibility.
+    """
+    pump = await StreamPump.from_yaml(config_path)
+    print(f"Organism: {pump.config.name}")
+    print(f"Listeners: {len(pump.listeners)}")
     print(f"Routing: {list(pump.routing_table.keys())}")
     return pump
 

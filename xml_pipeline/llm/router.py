@@ -341,7 +341,7 @@ class LLMRouter:
             )
 
             # Inject into the pump's queue
-            await pump.inject(envelope, thread_id=thread_id, from_id="system.budget")
+            await pump._inject_raw(envelope, thread_id=thread_id, from_id="system.budget")
 
             logger.info(
                 f"BudgetWarning sent to {target}: {threshold.severity} "

@@ -222,7 +222,7 @@ class SystemPipeline:
 
         # Step 5: Inject into pump
         from_id = f"{msg.source}:{msg.user}" if msg.user else msg.source
-        await self.pump.inject(envelope, thread_id=thread_id, from_id=from_id)
+        await self.pump._inject_raw(envelope, thread_id=thread_id, from_id=from_id)
 
         logger.info(f"Injected {msg.source} message to {msg.target}: {thread_id[:8]}...")
         return thread_id

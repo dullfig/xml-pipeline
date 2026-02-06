@@ -525,6 +525,7 @@ class TestBufferCollectVsFireAndForget:
         mock_pump.register_generic_listener = MagicMock()
         mock_pump._wrap_in_envelope = MagicMock(return_value=b"<envelope/>")
         mock_pump.inject = AsyncMock()
+        mock_pump._inject_raw = AsyncMock()
 
         # Mock thread registry
         mock_thread_registry = MagicMock()
@@ -563,6 +564,7 @@ class TestBufferCollectVsFireAndForget:
         mock_pump.register_generic_listener = MagicMock()
         mock_pump._wrap_in_envelope = MagicMock(return_value=b"<envelope/>")
         mock_pump.inject = AsyncMock()
+        mock_pump._inject_raw = AsyncMock()
 
         mock_thread_registry = MagicMock()
         mock_thread_registry.lookup = MagicMock(return_value="root.parent")
