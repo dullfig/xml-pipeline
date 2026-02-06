@@ -487,6 +487,7 @@ for source in answer.sources:
 
 ## Additional Resources
 
+- @docs/api.md — **Public Python API reference** (stable imports for downstream)
 - @docs/core-principles-v2.1.md — Single source of truth for architecture
 - @docs/message-pump-v2.1.md — Message pump implementation details
 - @docs/handler-contract-v2.1.md — Handler interface specification
