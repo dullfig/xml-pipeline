@@ -100,6 +100,12 @@ ROUTING_ERROR = SystemError(
     retry_allowed=True,
 )
 
+TIMEOUT_ERROR = SystemError(
+    code="timeout",
+    message="Handler timed out. Please try again.",
+    retry_allowed=True,
+)
+
 
 @dataclass
 class MessageState:

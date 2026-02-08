@@ -41,7 +41,7 @@ from xml_pipeline.message_bus.steps.c14n import c14n_step
 from xml_pipeline.message_bus.steps.envelope_validation import envelope_validation_step
 from xml_pipeline.message_bus.steps.payload_extraction import payload_extraction_step
 from xml_pipeline.message_bus.steps.thread_assignment import thread_assignment_step
-from xml_pipeline.message_bus.message_state import MessageState, HandlerMetadata, HandlerResponse, SystemError, ROUTING_ERROR
+from xml_pipeline.message_bus.message_state import MessageState, HandlerMetadata, HandlerResponse, SystemError, ROUTING_ERROR, TIMEOUT_ERROR
 from xml_pipeline.message_bus.thread_registry import get_registry
 from xml_pipeline.message_bus.todo_registry import get_todo_registry
 from xml_pipeline.message_bus.budget_registry import get_budget_registry
@@ -125,6 +125,7 @@ class ListenerConfig:
     broadcast: bool = False
     prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
     cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
+    timeout: float = 30.0  # Handler execution timeout in seconds
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
 
@@ -175,6 +176,7 @@ class Listener:
     broadcast: bool = False
     cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
     handler_path: str = ""  # Import path for worker process
+    timeout: float = 30.0  # Handler execution timeout in seconds
     schema: etree.XMLSchema = field(default=None, repr=False)
     root_tag: str = ""
     usage_instructions: str = ""  # Generated at registration for LLM agents
@@ -357,6 +359,10 @@ class StreamPump:
         # { table_name: { listener_name: usage_instructions_str } }
         self._table_usage_instructions: Dict[str, Dict[str, str]] = {}
 
+        # Worker registry for background processes
+        from xml_pipeline.workers import WorkerRegistry
+        self._worker_registry = WorkerRegistry()
+
         # Shared backend for cross-process state
         self._shared_backend = None
         if config.backend_type != "memory":
@@ -391,6 +397,49 @@ class StreamPump:
                 pump_logger.warning(f"Event callback error: {e}")
 
     # ------------------------------------------------------------------
+    # Thread Lifecycle
+    # ------------------------------------------------------------------
+
+    def _cleanup_thread(self, thread_id: str) -> None:
+        """
+        Consolidate all cleanup when a thread terminates.
+
+        Called when:
+        - Handler returns None (chain terminates)
+        - Chain exhausted after .respond() (nowhere to return)
+        """
+        # Budget cleanup
+        budget_registry = get_budget_registry()
+        final_budget = budget_registry.cleanup_thread(thread_id)
+        if final_budget:
+            pump_logger.debug(
+                f"Thread {thread_id[:8]}... completed: "
+                f"{final_budget.total_tokens} tokens used"
+            )
+
+        # Todo watcher cleanup
+        todo_registry = get_todo_registry()
+        closed = todo_registry.close_all_for_thread(thread_id)
+        if closed:
+            pump_logger.debug(
+                f"Thread {thread_id[:8]}... closed {closed} todo watcher(s)"
+            )
+
+        # Worker cleanup
+        if self._worker_registry:
+            stopped = self._worker_registry.cleanup_for_thread(thread_id)
+            if stopped:
+                pump_logger.debug(
+                    f"Thread {thread_id[:8]}... stopped {stopped} worker(s)"
+                )
+
+        # Emit thread completion event
+        self._emit_event(ThreadEvent(
+            thread_id=thread_id,
+            status="completed",
+        ))
+
+    # ------------------------------------------------------------------
     # Registration
     # ------------------------------------------------------------------
 
@@ -407,6 +456,7 @@ class StreamPump:
             broadcast=lc.broadcast,
             cpu_bound=lc.cpu_bound,
             handler_path=lc.handler_path,  # For worker process import
+            timeout=lc.timeout,
             schema=self._generate_schema(lc.payload_class),
             root_tag=root_tag,
         )
@@ -432,6 +482,7 @@ class StreamPump:
         broadcast: bool = False,
         prompt: str = "",
         cpu_bound: bool = False,
+        timeout: float = 30.0,
     ) -> Listener:
         """
         Register a listener using plain arguments (public API).
@@ -450,6 +501,7 @@ class StreamPump:
             broadcast: Allow multiple listeners to share root tag
             prompt: System prompt for LLM agents
             cpu_bound: Dispatch to ProcessPoolExecutor
+            timeout: Handler execution timeout in seconds (default 30)
 
         Returns:
             The registered Listener object
@@ -468,6 +520,7 @@ class StreamPump:
             broadcast=broadcast,
             prompt=prompt,
             cpu_bound=cpu_bound,
+            timeout=timeout,
             payload_class=payload_class,
             handler=handler,
         )
@@ -1000,25 +1053,49 @@ class StreamPump:
                     ))
 
                     # Dispatch to handler - either in-process or via ProcessPool
-                    if listener.cpu_bound and self._process_pool and self._shared_backend:
-                        response = await self._dispatch_to_process_pool(
-                            listener=listener,
-                            payload=payload_ref,
-                            metadata=metadata,
+                    # Wrap in wait_for to enforce per-listener timeout
+                    try:
+                        if listener.cpu_bound and self._process_pool and self._shared_backend:
+                            response = await asyncio.wait_for(
+                                self._dispatch_to_process_pool(
+                                    listener=listener,
+                                    payload=payload_ref,
+                                    metadata=metadata,
+                                ),
+                                timeout=listener.timeout,
+                            )
+                        else:
+                            response = await asyncio.wait_for(
+                                listener.handler(payload_ref, metadata),
+                                timeout=listener.timeout,
+                            )
+                    except asyncio.TimeoutError:
+                        pump_logger.error(
+                            f"Handler {listener.name} timed out after {listener.timeout}s"
                         )
-                    else:
-                        response = await listener.handler(payload_ref, metadata)
+                        self._emit_event(AgentStateEvent(
+                            agent_name=listener.name,
+                            state="error",
+                            thread_id=current_thread,
+                        ))
+                        # Send SystemError back to caller (keeps thread alive)
+                        error_bytes = self._wrap_in_envelope(
+                            payload=TIMEOUT_ERROR,
+                            from_id="system",
+                            to_id=listener.name,
+                            thread_id=current_thread,
+                        )
+                        yield MessageState(
+                            raw_bytes=error_bytes,
+                            thread_id=current_thread,
+                            from_id="system",
+                        )
+                        continue
 
                     # None means "no response needed" - don't re-inject
                     if response is None:
-                        # Thread terminates here - cleanup budget
-                        budget_registry = get_budget_registry()
-                        final_budget = budget_registry.cleanup_thread(current_thread)
-                        if final_budget:
-                            pump_logger.debug(
-                                f"Thread {current_thread[:8]}... completed: "
-                                f"{final_budget.total_tokens} tokens used"
-                            )
+                        # Thread terminates here - consolidated cleanup
+                        self._cleanup_thread(current_thread)
 
                         # Emit idle state
                         self._emit_event(AgentStateEvent(
@@ -1036,15 +1113,8 @@ class StreamPump:
                             # Response back to caller - prune chain
                             target, new_thread_id = registry.prune_for_response(current_thread)
                             if target is None:
-                                # Chain exhausted - nowhere to respond to
-                                # Cleanup thread budget
-                                budget_registry = get_budget_registry()
-                                final_budget = budget_registry.cleanup_thread(current_thread)
-                                if final_budget:
-                                    pump_logger.debug(
-                                        f"Thread {current_thread[:8]}... chain exhausted: "
-                                        f"{final_budget.total_tokens} tokens used"
-                                    )
+                                # Chain exhausted - consolidated cleanup
+                                self._cleanup_thread(current_thread)
                                 continue
                             to_id = target
                             thread_id = new_thread_id
@@ -1568,6 +1638,10 @@ class StreamPump:
         self._running = False
         await self.queue.join()
 
+        # Stop all background workers
+        if self._worker_registry:
+            self._worker_registry.shutdown_all()
+
         # Shutdown process pool if active
         if self._process_pool:
             self._process_pool.shutdown(wait=True)
@@ -1794,6 +1868,7 @@ class ConfigLoader:
             broadcast=raw.get("broadcast", False),
             prompt=raw.get("prompt", ""),
             cpu_bound=raw.get("cpu_bound", False),
+            timeout=float(raw.get("timeout_seconds", 30.0)),
         )
 
     @classmethod

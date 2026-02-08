@@ -17,6 +17,7 @@ from xml_pipeline.message_bus.stream_pump import (
     ThreadEvent,
     ReloadEvent,
 )
+from xml_pipeline.workers import get_worker_registry
 
 __all__ = [
     "__version__",
@@ -33,4 +34,6 @@ __all__ = [
     "AgentStateEvent",
     "ThreadEvent",
     "ReloadEvent",
+    # Workers
+    "get_worker_registry",
 ]
