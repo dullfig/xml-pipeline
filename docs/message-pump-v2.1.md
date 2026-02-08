@@ -8,9 +8,9 @@ All implementation must conform to this architecture.
 
 ### Core Model
 
-- **Pipeline-per-listener** — each registered listener owns one dedicated preprocessing pipeline.
+- **Pipeline-per-listener** — each registered listener owns one dedicated preprocessing pipeline. **(Current implementation:** single unified pipeline. Per-listener pipelines with custom steps are a v2.2 target — see Future Extensions.)
 - **Permanent system pipeline** — always exists at bootstrap, even with zero user listeners.
-- **Configurable ordered steps** — each pipeline is an ordered list of async coroutine functions that transform a universal `MessageState`.
+- **Configurable ordered steps** — each pipeline is an ordered list of async coroutine functions that transform a universal `MessageState`. **(Current:** steps are fixed at bootstrap. Per-listener step customization is a future extension.)
 - **Routing resolution inside pipeline** — routing is just another step; the dispatcher receives fully routed messages.
 - **Dumb dispatcher** — only awaits handler(s) and processes responses.
 - **Hard-coded multi-payload extraction** — handler responses are specially processed outside normal pipelines to support 1..n emitted payloads.
@@ -207,7 +207,7 @@ async def dispatcher(state: MessageState):
 
 ### Key Invariants (v2.1)
 
-1. One dedicated pipeline per registered listener + permanent system pipeline.
+1. **(Target)** One dedicated pipeline per registered listener + permanent system pipeline. **(Current)** Single unified pipeline + permanent system pipeline.
 2. Pipelines are ordered lists of async steps operating on universal `MessageState`.
 3. Routing resolution is a normal pipeline step → dispatcher receives pre-routed targets.
 4. Handlers return `HandlerResponse` (or `None` to terminate) → pump wraps payload in envelope and re-injects.

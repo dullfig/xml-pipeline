@@ -115,10 +115,12 @@ Privileged local control channel (GUI/hot-reload ready).
 - Disabled → fully static configuration (restart required for changes).
 - Bound to localhost by default for security.
 
-#### `thread_scheduling`
+#### `thread_scheduling` *(not yet implemented)*
 Subthread execution policy across the organism.
 - `"breadth-first"` (default): fair round-robin, prevents deep branch starvation.
 - `"depth-first"`: aggressive dive into branches.
+
+**Note:** This field is parsed but **not yet used** by the dispatcher. All messages are currently processed in FIFO order.
 
 #### `meta`
 Introspection controls (`https://xml-pipeline.org/ns/meta/v1` namespace).
@@ -139,6 +141,8 @@ All bounded capabilities (tools and agents).
 Federation peers (trusted remote organisms).
 - Declared separately for clarity.
 - Referenced in agent `peers:` lists by their registered `name`.
+
+**Note:** Gateways are **not yet implemented** at runtime. These declarations are parsed for forward-compatibility but no outbound connections or message forwarding occurs.
 
 #### `llm`
 LLM router configuration for agents. See `llm-router-v2.1.md` for complete specification.

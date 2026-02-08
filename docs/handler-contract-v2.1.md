@@ -84,6 +84,8 @@ class HandlerMetadata:
 
 ### Todo Nudge (for LLM Agents)
 
+**Note:** This mechanism is **not yet implemented**. The `todo_nudge` field currently defaults to an empty string.
+
 The `todo_nudge` field is populated by the pump when an agent has raised "eyebrows" —
 registered watchers from `TodoUntil` that have received matching responses.
 

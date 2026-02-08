@@ -41,7 +41,7 @@ These principles are the single canonical source of truth for the project. All d
 - Multiple listeners may register for the same root tag (enabling broadcast parallelism); LLM agents require unique root tags.
 
 ## Message Pump
-- Parallel preprocessing pipelines (one per registered listener): ingress → repair → C14N → envelope validation → payload extraction → XSD validation → deserialization → error injection on failure.
+- Parallel preprocessing pipelines (one per registered listener): ingress → repair → C14N → envelope validation → payload extraction → XSD validation → deserialization → error injection on failure. **(Current implementation:** single unified pipeline with fan-out dispatch. Per-listener pipelines are the v2.2 target.)
 - Central async message pump orchestrates:
   - Gathering ready messages from pipeline outputs
   - Routing lookup: direct (`<to/>`) or broadcast (all listeners for root tag; unique roots naturally self-route for agents)
@@ -51,7 +51,7 @@ These principles are the single canonical source of truth for the project. All d
 - Supports true parallelism: pipeline preprocessing concurrent, broadcast handlers concurrent via asyncio.gather.
 - Validation failures inject `<huh>` error elements (LLM-friendly self-correction).
 - Message pump tracks token budgets per agent and thread, enforcing limits and preventing abuse. The LLM abstraction layer informs the message bus on actual token usage.
-- Message pump uses asynchronous non-blocking I/O for maximum throughput, with provisions for concurrency limits, fair scheduling, and backpressure.
+- Message pump uses asynchronous non-blocking I/O for maximum throughput, with concurrency limits (per-agent semaphores and global `task_limit`). Fair-share queuing and thread-level scheduling are **not yet implemented**.
 - Handler timeout enforced via `asyncio.wait_for()` on every dispatch. Default 30 seconds, configurable per-listener. On timeout: `SystemError(code="timeout")` sent back, thread stays alive, `AgentStateEvent(error)` emitted.
 
 ## Reasoning & Iteration
@@ -82,7 +82,7 @@ These principles are the single canonical source of truth for the project. All d
 
 ### Identity & Cryptography
 - Ed25519 identity key used for envelope signing, federation auth, and privileged command verification.
-- All traffic on main bus uses mandatory WSS (TLS) + TOTP authentication.
+- WSS (TLS) and TOTP authentication are planned but **not yet enforced at runtime**. Config fields (`tls.cert`, `tls.key`) are parsed but no certificate loading or token validation occurs.
 
 ### Handler Isolation (NEW)
 - **Handlers are untrusted code** running in coroutine sandboxes with minimal context.
@@ -121,13 +121,15 @@ These principles are the single canonical source of truth for the project. All d
 - Remote tools referenced by gateway name in agent tool lists.
 - Regular messages flow bidirectionally; privileged messages never forwarded or accepted.
 
+**Note:** Federation is **not yet implemented**. Gateway declarations in YAML are parsed for forward-compatibility but no runtime connections, message forwarding, or identity verification occurs.
+
 ## Introspection (Meta)
-- Controlled via YAML flags (`allow_list_capabilities`, `allow_schema_requests`, etc.).
-- Supports `request-schema`, `request-example`, `request-prompt`, `list-capabilities`.
-- Remote meta queries optionally allowed per YAML (federation peers).
+- Introspection is **operator-only** — available via REST API (`/api/v1/capabilities`) and OOB privileged channel (`list-listeners`, `get-listener-schema`). Agents have no discovery capability.
+- XML message-based meta handlers on the main bus (`request-schema`, `request-example`, `request-prompt`, `list-capabilities`) are intentionally deferred to prevent topology probing by agents.
+- YAML flags (`allow_list_capabilities`, `allow_schema_requests`, etc.) are parsed for forward-compatibility but **not yet enforced**. These will gate access for federation peers when remote meta queries are implemented.
 
 ## Technical Constraints
-- Mandatory WSS (TLS) + TOTP on main port.
+- WSS (TLS) + TOTP on main port **(not yet enforced — see Identity & Cryptography above)**.
 - OOB channel WSS or Unix socket, localhost-default.
 - Internal: lxml trees → XSD validation → xmlable deserialization → dataclass → handler → bytes → dummy extraction → multi-envelope re-injection.
 - Single process, async non-blocking.
@@ -145,12 +147,12 @@ These principles are the single canonical source of truth for the project. All d
 - Handler closes over or receives UUID for access — still oblivious to readable path.
 
 ## Resource Stewardship
-- The Message Pump ensures fair execution and prevents "Paperclip" runaway scenarios via Thread-Level Scheduling and Concurrency Controls. Every thread is subject to Token-Rate Monitoring and Fair-Share Queuing, ensuring that a high-volume agent cannot block high-priority events or starve simpler organs.
+- The Message Pump prevents "Paperclip" runaway scenarios via concurrency controls (per-agent semaphores and global `task_limit`). Fair-share queuing and thread-level scheduling are **not yet implemented** — all messages are currently processed in FIFO order.
 - **Handler timeout** (default 30s, configurable per-listener) prevents infinite handler hangs. Timed-out handlers receive `SystemError(code="timeout")` — the thread stays alive so the agent can retry or adjust.
 - **Thread lifecycle cleanup** (`_cleanup_thread`) consolidates resource release when threads terminate: token budgets, todo watchers, background workers, and event emission — all in one path for both `return None` and chain-exhausted cases.
 - **Background workers** (`WorkerRegistry`) are scoped to threads and automatically stopped when their owning thread terminates. The pump calls `shutdown_all()` on graceful shutdown.
 
-These principles are now locked for v2.1. The Message Pump v2.1 specification remains the canonical detail for pump behavior. Future changes require explicit discussion and amendment here first.
+These principles define the target architecture for v2.1. Features marked **(not yet implemented)** are planned but not yet in the codebase. The Message Pump v2.1 specification remains the canonical detail for pump behavior. Future changes require explicit discussion and amendment here first.
 
 ## Handler Trust Boundary & Coroutine Isolation
 

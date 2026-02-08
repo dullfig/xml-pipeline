@@ -124,11 +124,12 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 2. Tests for `shell.py` (command blocklist, shell operator filtering)
 3. Tests for `files.py` (path traversal, sandbox enforcement)
 
-### P1 — Honesty (fix doc/code mismatches)
-4. Fix docs: pipeline is unified, not per-listener
-5. Fix docs: TLS/TOTP not enforced (remove "mandatory" or implement)
-6. Fix docs: thread scheduling not implemented
-7. Fix docs: federation not implemented
+### P1 — Honesty (fix doc/code mismatches) — DONE
+4. ~~Fix docs: pipeline is unified, not per-listener~~ — annotated in core-principles, message-pump
+5. ~~Fix docs: TLS/TOTP not enforced~~ — changed "mandatory" to "not yet enforced" in core-principles
+6. ~~Fix docs: thread scheduling not implemented~~ — annotated in configuration.md
+7. ~~Fix docs: federation not implemented~~ — annotated in core-principles, configuration.md
+- Also fixed: introspection (meta) rewritten as operator-only; todo_nudge marked not yet implemented; fair-share queuing annotated; "locked for v2.1" softened
 
 ### P2 — Completeness (implement stubs)
 8. Implement `keyvalue.py` backend (Redis or SQLite)
