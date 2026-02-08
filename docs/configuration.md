@@ -38,6 +38,13 @@ meta:
   allow_prompt_requests: "admin"
   allow_remote: false                           # Federation peers may query meta
 
+network:                                        # Network port allocations
+  ports:
+    - port: 9000                                # Webhook receiver port
+      bind: "127.0.0.1"                         # Default: localhost-only
+      listener: webhook-receiver                # Owning listener
+      protocol: tcp                             # Default: tcp
+
 listeners:
   - name: calculator.add
     payload_class: examples.calculator.AddPayload
@@ -159,6 +166,37 @@ Subthread execution policy across the organism.
 #### `meta`
 Introspection controls (`https://xml-pipeline.org/ns/meta/v1` namespace).
 - Flags control who may request capability lists, schemas, examples, prompts.
+
+#### `network`
+Network port allocation gate. Only ports explicitly declared here can be opened by listeners. Empty or absent `network:` section = zero ports allowed (secure default). Main bus port and OOB port are system-level and exempt.
+- `ports`: List of port allocations. Each entry:
+  - `port` (required): Port number.
+  - `bind`: Bind address (default `"127.0.0.1"` — localhost-only).
+  - `listener`: Name of the listener allowed to open this port.
+  - `protocol`: `"tcp"` (default) or `"udp"`.
+
+```yaml
+network:
+  ports:
+    - port: 9000
+      bind: "127.0.0.1"
+      listener: webhook-receiver
+      protocol: tcp
+    - port: 9001
+      bind: "0.0.0.0"
+      listener: file-server
+```
+
+The gate is available programmatically via `get_port_gate()`:
+
+```python
+from xml_pipeline import get_port_gate
+
+gate = get_port_gate()
+alloc = gate.request(9000, "127.0.0.1", "webhook-receiver", "tcp")
+# ... use port ...
+gate.release(9000)
+```
 
 #### `listeners`
 All bounded capabilities (tools and agents).

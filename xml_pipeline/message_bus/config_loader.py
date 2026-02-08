@@ -67,6 +67,18 @@ class ConfigLoader:
                 "peers": peers_dict,
             })
 
+        # Parse network port allocations
+        network_ports: List[Dict[str, Any]] = []
+        network = raw.get("network", {})
+        if network:
+            for port_raw in network.get("ports", []):
+                network_ports.append({
+                    "port": int(port_raw["port"]),
+                    "bind": port_raw.get("bind", "127.0.0.1"),
+                    "listener": port_raw.get("listener", ""),
+                    "protocol": port_raw.get("protocol", "tcp"),
+                })
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -89,6 +101,7 @@ class ConfigLoader:
             auth_totp_secret_env=auth_totp_secret_env,
             auth_totp_required=auth_totp_required,
             peer_table_configs=peer_table_configs,
+            network_ports=network_ports,
         )
 
         for entry in raw.get("listeners", []):

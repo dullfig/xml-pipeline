@@ -74,6 +74,10 @@ class OrganismConfig:
     # Each: {"name": str, "parent": str|None, "peers": {listener: [peers]}}
     peer_table_configs: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Network port allocations from YAML config
+    # Each: {"port": int, "bind": str, "listener": str, "protocol": str}
+    network_ports: List[Dict[str, Any]] = field(default_factory=list)
+
 
 @dataclass
 class Listener:

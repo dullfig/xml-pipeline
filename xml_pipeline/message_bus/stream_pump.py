@@ -177,6 +177,9 @@ class StreamPump:
         from xml_pipeline.workers import WorkerRegistry
         self._worker_registry = WorkerRegistry()
 
+        # Port gate (initialized in start())
+        self._port_gate: Any = None
+
         # Shared backend for cross-process state
         self._shared_backend = None
         if config.backend_type != "memory":
@@ -794,7 +797,21 @@ class StreamPump:
         # Set global singleton
         set_stream_pump(self)
 
-        # --- 8. OOB privileged channel ---
+        # --- 8. Network port gate ---
+        from xml_pipeline.network.port_gate import PortAllocation, PortGate, set_port_gate
+        allocations = [
+            PortAllocation(
+                port=p["port"],
+                bind=p.get("bind", "127.0.0.1"),
+                listener=p.get("listener", ""),
+                protocol=p.get("protocol", "tcp"),
+            )
+            for p in self.config.network_ports
+        ]
+        self._port_gate = PortGate(allocations)
+        set_port_gate(self._port_gate)
+
+        # --- 9. OOB privileged channel ---
         import time as _time
         self._start_time = _time.time()
         if self.config.oob_enabled:
@@ -825,7 +842,7 @@ class StreamPump:
                 pump_logger.warning(f"OOB server failed to start: {e}")
                 self._oob_server = None
 
-        # --- 9. Peer tables from config ---
+        # --- 10. Peer tables from config ---
         if self.config.peer_table_configs:
             self._register_config_peer_tables()
 
@@ -1550,6 +1567,13 @@ class StreamPump:
 
         self._running = False
         await self.queue.join()
+
+        # Release port gate
+        if self._port_gate:
+            self._port_gate.shutdown()
+            from xml_pipeline.network.port_gate import reset_port_gate
+            reset_port_gate()
+            self._port_gate = None
 
         # Stop all background workers
         if self._worker_registry:

@@ -67,6 +67,7 @@ class TestTopLevelImports:
             "PumpEvent", "MessageReceivedEvent", "MessageSentEvent",
             "AgentStateEvent", "ThreadEvent", "ReloadEvent",
             "get_worker_registry",
+            "get_port_gate",
         }
         assert set(xml_pipeline.__all__) == expected
 

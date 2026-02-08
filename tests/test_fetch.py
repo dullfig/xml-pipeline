@@ -1,27 +1,76 @@
-"""Tests for fetch tool security validation.
+"""Tests for fetch tool security validation and httpx-based execution.
 
-Tests the URL validation, private IP detection, and SSRF protection in
-xml_pipeline/tools/fetch.py. Does NOT make real HTTP requests — only tests
-the security gate logic.
+Tests the URL validation, private IP detection, SSRF protection, httpx-based
+_do_fetch() core, @tool wrapper, payload classes, handler, and header parsing.
 """
 
 import socket
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from xml_pipeline.tools.fetch import (
+    ALLOWED_METHODS,
     ALLOWED_SCHEMES,
     BLOCKED_HOSTS,
+    DEFAULT_TIMEOUT,
     MAX_RESPONSE_SIZE,
+    FetchRequest,
+    FetchResponse,
+    _do_fetch,
     _is_private_ip,
+    _parse_headers,
     _validate_url,
     fetch_url,
+    handle_fetch,
 )
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestValidateUrl — URL security validation
+# Helpers — httpx mock factory
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _mock_httpx_client(
+    *,
+    url: str = "https://example.com",
+    status_code: int = 200,
+    content: bytes = b"Hello",
+    headers: dict | None = None,
+    side_effect: Exception | None = None,
+):
+    """Build a patched httpx.AsyncClient context manager."""
+    mock_response = MagicMock()
+    mock_response.url = url
+    mock_response.status_code = status_code
+    mock_response.content = content
+    mock_response.headers = headers or {"content-type": "text/html"}
+
+    mock_client = AsyncMock()
+    if side_effect:
+        mock_client.request = AsyncMock(side_effect=side_effect)
+    else:
+        mock_client.request = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    return patch("xml_pipeline.tools.fetch.httpx.AsyncClient", return_value=mock_client), mock_client
+
+
+def _metadata() -> HandlerMetadata:
+    """Build minimal HandlerMetadata for handler tests."""
+    return HandlerMetadata(
+        thread_id="test-thread-001",
+        from_id="test-caller",
+        own_name=None,
+        is_self_call=False,
+        usage_instructions="",
+        todo_nudge="",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestValidateUrl — URL security validation (kept from original)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestValidateUrl:
@@ -127,7 +176,7 @@ class TestValidateUrl:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestIsPrivateIp — IP address classification
+# TestIsPrivateIp — IP address classification (kept from original)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestIsPrivateIp:
@@ -178,7 +227,7 @@ class TestIsPrivateIp:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# TestFetchUrlTool — @tool function validation gates
+# TestFetchUrlTool — @tool function validation gates (kept from original)
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestFetchUrlTool:
@@ -191,8 +240,7 @@ class TestFetchUrlTool:
     async def test_blocked_method_returns_error(self) -> None:
         result = await fetch_url(url="https://example.com", method="TRACE")
         assert result.success is False
-        # Either blocked by method validation or by missing aiohttp
-        assert "not allowed" in result.error.lower() or "aiohttp" in result.error.lower()
+        assert "not allowed" in result.error.lower()
 
     async def test_file_scheme_returns_error(self) -> None:
         result = await fetch_url(url="file:///etc/passwd")
@@ -207,4 +255,356 @@ class TestFetchUrlTool:
         assert result.success is False
 
     async def test_max_response_size_constant(self) -> None:
+        assert MAX_RESPONSE_SIZE == 10 * 1024 * 1024
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestDoFetch — core _do_fetch() with mocked httpx
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestDoFetch:
+    """_do_fetch() performs HTTP requests via httpx with security validation."""
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_get_success(self, _mock_ip: object) -> None:
+        patcher, mock_client = _mock_httpx_client(
+            url="https://example.com",
+            status_code=200,
+            content=b"Hello World",
+            headers={"content-type": "text/html"},
+        )
+        with patcher:
+            result = await _do_fetch("https://example.com")
+        assert result["status_code"] == 200
+        assert result["body"] == "Hello World"
+        assert result["content_type"] == "text/html"
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_post_with_body(self, _mock_ip: object) -> None:
+        patcher, mock_client = _mock_httpx_client(
+            url="https://api.example.com/data",
+            status_code=201,
+            content=b'{"id": 1}',
+        )
+        with patcher:
+            result = await _do_fetch(
+                "https://api.example.com/data",
+                method="POST",
+                body='{"name": "test"}',
+            )
+        assert result["status_code"] == 201
+        mock_client.request.assert_called_once()
+        call_kwargs = mock_client.request.call_args
+        assert call_kwargs[0][0] == "POST"
+        assert call_kwargs[1].get("content") == '{"name": "test"}'
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_redirect_url_captured(self, _mock_ip: object) -> None:
+        patcher, _ = _mock_httpx_client(
+            url="https://final.example.com/page",
+            status_code=200,
+            content=b"Redirected",
+        )
+        with patcher:
+            result = await _do_fetch("https://example.com/old")
+        assert result["url"] == "https://final.example.com/page"
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_timeout_propagates(self, _mock_ip: object) -> None:
+        import httpx
+        patcher, _ = _mock_httpx_client(side_effect=httpx.ReadTimeout("timeout"))
+        with patcher:
+            with pytest.raises(httpx.ReadTimeout):
+                await _do_fetch("https://example.com", timeout=5)
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_size_limit_enforced(self, _mock_ip: object) -> None:
+        big_content = b"x" * (MAX_RESPONSE_SIZE + 1)
+        patcher, _ = _mock_httpx_client(content=big_content)
+        with patcher:
+            with pytest.raises(ValueError, match="exceeded"):
+                await _do_fetch("https://example.com")
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_binary_content_base64(self, _mock_ip: object) -> None:
+        import base64
+        binary = bytes(range(256))
+        patcher, _ = _mock_httpx_client(content=binary)
+        with patcher:
+            result = await _do_fetch("https://example.com/binary")
+        # Should be base64-encoded since it can't decode as UTF-8
+        decoded = base64.b64decode(result["body"])
+        assert decoded == binary
+
+    @pytest.mark.asyncio
+    async def test_method_validation_error(self) -> None:
+        with pytest.raises(ValueError, match="not allowed"):
+            await _do_fetch("https://example.com", method="TRACE")
+
+    @pytest.mark.asyncio
+    async def test_ssrf_blocked(self) -> None:
+        with pytest.raises(ValueError, match="blocked"):
+            await _do_fetch("http://localhost/admin")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestHandleFetch — message-bus handler
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestHandleFetch:
+    """handle_fetch() wraps _do_fetch() and always responds to caller."""
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_success_response(self, _mock_ip: object) -> None:
+        patcher, _ = _mock_httpx_client(
+            url="https://example.com",
+            status_code=200,
+            content=b"OK",
+            headers={"content-type": "text/plain"},
+        )
+        with patcher:
+            resp = await handle_fetch(
+                FetchRequest(url="https://example.com"),
+                _metadata(),
+            )
+        assert isinstance(resp, HandlerResponse)
+        assert resp.is_response is True
+        payload = resp.payload
+        assert isinstance(payload, FetchResponse)
+        assert payload.status_code == 200
+        assert payload.body == "OK"
+        assert payload.error == ""
+
+    @pytest.mark.asyncio
+    async def test_error_response(self) -> None:
+        resp = await handle_fetch(
+            FetchRequest(url="http://localhost/admin"),
+            _metadata(),
+        )
+        payload = resp.payload
+        assert isinstance(payload, FetchResponse)
+        assert payload.status_code == 0
+        assert payload.error != ""
+        assert "blocked" in payload.error.lower()
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_header_parsing(self, _mock_ip: object) -> None:
+        patcher, mock_client = _mock_httpx_client()
+        with patcher:
+            await handle_fetch(
+                FetchRequest(
+                    url="https://example.com",
+                    headers="Authorization: Bearer token123\nX-Custom: value",
+                ),
+                _metadata(),
+            )
+        call_kwargs = mock_client.request.call_args
+        headers = call_kwargs[1].get("headers")
+        assert headers == {"Authorization": "Bearer token123", "X-Custom": "value"}
+
+    @pytest.mark.asyncio
+    async def test_always_responds(self) -> None:
+        """Handler always uses .respond() regardless of success/failure."""
+        resp = await handle_fetch(
+            FetchRequest(url="not-a-url"),
+            _metadata(),
+        )
+        assert resp.is_response is True
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_timeout_param_forwarded(self, _mock_ip: object) -> None:
+        import httpx as httpx_mod
+        patcher, _ = _mock_httpx_client(side_effect=httpx_mod.ReadTimeout("timeout"))
+        with patcher:
+            resp = await handle_fetch(
+                FetchRequest(url="https://example.com", timeout=5),
+                _metadata(),
+            )
+        payload = resp.payload
+        assert payload.error != ""
+        assert payload.status_code == 0
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_error(self) -> None:
+        resp = await handle_fetch(
+            FetchRequest(url="ftp://bad-scheme.com"),
+            _metadata(),
+        )
+        assert resp.payload.error != ""
+        assert "not allowed" in resp.payload.error.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestParseHeaders — header string parsing
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestParseHeaders:
+    """_parse_headers() splits newline-separated 'Key: Value' pairs."""
+
+    def test_empty_returns_none(self) -> None:
+        assert _parse_headers("") is None
+        assert _parse_headers("   ") is None
+
+    def test_single_header(self) -> None:
+        result = _parse_headers("Content-Type: application/json")
+        assert result == {"Content-Type": "application/json"}
+
+    def test_multiple_headers(self) -> None:
+        raw = "Authorization: Bearer tok\nX-Custom: hello\nAccept: text/html"
+        result = _parse_headers(raw)
+        assert result == {
+            "Authorization": "Bearer tok",
+            "X-Custom": "hello",
+            "Accept": "text/html",
+        }
+
+    def test_colon_in_value(self) -> None:
+        """Authorization: Bearer abc:def:ghi should preserve colons in value."""
+        result = _parse_headers("Authorization: Bearer abc:def:ghi")
+        assert result == {"Authorization": "Bearer abc:def:ghi"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestFetchPayloadRoundtrip — xmlify serialization
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFetchPayloadRoundtrip:
+    """FetchRequest and FetchResponse serialize to/from XML correctly."""
+
+    def test_fetch_request_roundtrip(self) -> None:
+        from lxml import etree
+        from third_party.xmlable import parse_element
+
+        req = FetchRequest(url="https://example.com", method="POST", body='{"a":1}')
+        tree = req.xml_value("FetchRequest")
+        parsed = parse_element(FetchRequest, tree)
+        assert parsed.url == "https://example.com"
+        assert parsed.method == "POST"
+        assert parsed.body == '{"a":1}'
+
+    def test_fetch_response_roundtrip(self) -> None:
+        from lxml import etree
+        from third_party.xmlable import parse_element
+
+        resp = FetchResponse(
+            url="https://example.com",
+            status_code=200,
+            body="Hello",
+            content_type="text/html",
+            error="",
+        )
+        tree = resp.xml_value("FetchResponse")
+        parsed = parse_element(FetchResponse, tree)
+        assert parsed.status_code == 200
+        assert parsed.body == "Hello"
+        assert parsed.error == ""
+
+    def test_fetch_request_defaults(self) -> None:
+        req = FetchRequest(url="https://example.com")
+        assert req.method == "GET"
+        assert req.body == ""
+        assert req.headers == ""
+        assert req.timeout == 30
+        assert req.allow_internal == 0
+
+    def test_fetch_request_all_fields(self) -> None:
+        req = FetchRequest(
+            url="https://api.example.com/data",
+            method="PUT",
+            body='{"update": true}',
+            headers="Authorization: Bearer x",
+            timeout=60,
+            allow_internal=1,
+        )
+        assert req.url == "https://api.example.com/data"
+        assert req.method == "PUT"
+        assert req.timeout == 60
+        assert req.allow_internal == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestHttpxTool — @tool wrapper with mocked httpx
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestHttpxTool:
+    """fetch_url @tool wrapper uses httpx via _do_fetch()."""
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_get_via_tool(self, _mock_ip: object) -> None:
+        patcher, _ = _mock_httpx_client(
+            url="https://example.com",
+            status_code=200,
+            content=b"tool response",
+            headers={"content-type": "text/html"},
+        )
+        with patcher:
+            result = await fetch_url(url="https://example.com")
+        assert result.success is True
+        assert result.data["status_code"] == 200
+        assert result.data["body"] == "tool response"
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_post_via_tool(self, _mock_ip: object) -> None:
+        patcher, _ = _mock_httpx_client(
+            url="https://api.example.com",
+            status_code=201,
+            content=b'{"created": true}',
+        )
+        with patcher:
+            result = await fetch_url(
+                url="https://api.example.com",
+                method="POST",
+                body='{"name": "test"}',
+            )
+        assert result.success is True
+        assert result.data["status_code"] == 201
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_timeout_error_via_tool(self, _mock_ip: object) -> None:
+        import httpx as httpx_mod
+        patcher, _ = _mock_httpx_client(side_effect=httpx_mod.ReadTimeout("timeout"))
+        with patcher:
+            result = await fetch_url(url="https://example.com", timeout=5)
+        assert result.success is False
+        assert "timed out" in result.error.lower()
+
+    @pytest.mark.asyncio
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_connection_error_via_tool(self, _mock_ip: object) -> None:
+        import httpx as httpx_mod
+        patcher, _ = _mock_httpx_client(
+            side_effect=httpx_mod.ConnectError("connection refused")
+        )
+        with patcher:
+            result = await fetch_url(url="https://example.com")
+        assert result.success is False
+        assert "error" in result.error.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestConstants — verify security constants
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestConstants:
+    """Security constants are correctly defined."""
+
+    def test_default_timeout(self) -> None:
+        assert DEFAULT_TIMEOUT == 30
+
+    def test_allowed_methods(self) -> None:
+        assert ALLOWED_METHODS == {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+
+    def test_max_response_size(self) -> None:
         assert MAX_RESPONSE_SIZE == 10 * 1024 * 1024

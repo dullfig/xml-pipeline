@@ -7,7 +7,7 @@ to interact with the outside world.
 
 from .base import Tool, ToolResult, tool, get_tool_registry
 from .calculate import calculate, Calculate, CalculateResult, handle_calculate
-from .fetch import fetch_url
+from .fetch import fetch_url, FetchRequest, FetchResponse, handle_fetch
 from .files import read_file, write_file, list_dir, delete_file, configure_allowed_paths
 from .shell import run_command, configure_allowed_commands, configure_blocked_commands
 from .search import web_search, configure_search
@@ -31,6 +31,10 @@ __all__ = [
     "Calculate",
     "CalculateResult",
     "handle_calculate",
+    # Fetch listener
+    "FetchRequest",
+    "FetchResponse",
+    "handle_fetch",
     # Tools
     "calculate",
     "fetch_url",

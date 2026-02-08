@@ -17,6 +17,7 @@ from xml_pipeline.message_bus.events import (
     ReloadEvent,
 )
 from xml_pipeline.workers import get_worker_registry
+from xml_pipeline.network import get_port_gate
 
 __all__ = [
     "__version__",
@@ -34,4 +35,6 @@ __all__ = [
     "ReloadEvent",
     # Workers
     "get_worker_registry",
+    # Network
+    "get_port_gate",
 ]
