@@ -6,7 +6,7 @@ to interact with the outside world.
 """
 
 from .base import Tool, ToolResult, tool, get_tool_registry
-from .calculate import calculate
+from .calculate import calculate, Calculate, CalculateResult, handle_calculate
 from .fetch import fetch_url
 from .files import read_file, write_file, list_dir, delete_file, configure_allowed_paths
 from .shell import run_command, configure_allowed_commands, configure_blocked_commands
@@ -27,6 +27,10 @@ __all__ = [
     "configure_blocked_commands",
     "configure_search",
     "configure_librarian",
+    # Calculator listener
+    "Calculate",
+    "CalculateResult",
+    "handle_calculate",
     # Tools
     "calculate",
     "fetch_url",

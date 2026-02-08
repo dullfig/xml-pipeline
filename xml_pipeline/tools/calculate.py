@@ -1,43 +1,27 @@
 """
 Calculate tool - evaluate mathematical expressions safely.
 
-Uses a restricted AST evaluator for safe expression evaluation.
-No external dependencies required.
+Uses simpleeval for safe expression evaluation with a restricted set of
+math functions and constants. Also provides @xmlify payload classes and
+a handler for use as a message-bus listener.
 """
 
-from __future__ import annotations
-
-import ast
 import math
-import operator
-from typing import Any, Union
+from dataclasses import dataclass
+from typing import Any
 
-from .base import tool, ToolResult
+from simpleeval import simple_eval
 
+from third_party.xmlable import xmlify
 
-# Allowed operations
-OPERATORS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.FloorDiv: operator.floordiv,
-    ast.Mod: operator.mod,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg,
-    ast.UAdd: operator.pos,
-}
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
-COMPARISONS = {
-    ast.Eq: operator.eq,
-    ast.NotEq: operator.ne,
-    ast.Lt: operator.lt,
-    ast.LtE: operator.le,
-    ast.Gt: operator.gt,
-    ast.GtE: operator.ge,
-}
+from .base import ToolResult, tool
 
-# Allowed functions
+# ---------------------------------------------------------------------------
+# Allowed functions & constants
+# ---------------------------------------------------------------------------
+
 MATH_FUNCTIONS = {
     "abs": abs,
     "round": round,
@@ -59,7 +43,6 @@ MATH_FUNCTIONS = {
     "pow": pow,
 }
 
-# Allowed constants
 MATH_CONSTANTS = {
     "pi": math.pi,
     "e": math.e,
@@ -67,89 +50,23 @@ MATH_CONSTANTS = {
     "inf": math.inf,
 }
 
-
-class SafeEvaluator(ast.NodeVisitor):
-    """Safely evaluate mathematical expressions using AST."""
-
-    def visit(self, node: ast.AST) -> Any:
-        """Visit a node."""
-        method = f"visit_{node.__class__.__name__}"
-        visitor = getattr(self, method, self.generic_visit)
-        return visitor(node)
-
-    def generic_visit(self, node: ast.AST) -> None:
-        """Reject unknown node types."""
-        raise ValueError(f"Unsupported operation: {node.__class__.__name__}")
-
-    def visit_Expression(self, node: ast.Expression) -> Any:
-        return self.visit(node.body)
-
-    def visit_Constant(self, node: ast.Constant) -> Union[int, float]:
-        if isinstance(node.value, (int, float)):
-            return node.value
-        raise ValueError(f"Unsupported constant type: {type(node.value)}")
-
-    def visit_Num(self, node: ast.Num) -> Union[int, float]:
-        # Python 3.7 compatibility
-        return node.n
-
-    def visit_Name(self, node: ast.Name) -> Any:
-        if node.id in MATH_CONSTANTS:
-            return MATH_CONSTANTS[node.id]
-        raise ValueError(f"Unknown variable: {node.id}")
-
-    def visit_BinOp(self, node: ast.BinOp) -> Any:
-        op_type = type(node.op)
-        if op_type not in OPERATORS:
-            raise ValueError(f"Unsupported operator: {op_type.__name__}")
-        left = self.visit(node.left)
-        right = self.visit(node.right)
-        return OPERATORS[op_type](left, right)
-
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Any:
-        op_type = type(node.op)
-        if op_type not in OPERATORS:
-            raise ValueError(f"Unsupported operator: {op_type.__name__}")
-        operand = self.visit(node.operand)
-        return OPERATORS[op_type](operand)
-
-    def visit_Compare(self, node: ast.Compare) -> bool:
-        left = self.visit(node.left)
-        for op, comparator in zip(node.ops, node.comparators):
-            op_type = type(op)
-            if op_type not in COMPARISONS:
-                raise ValueError(f"Unsupported comparison: {op_type.__name__}")
-            right = self.visit(comparator)
-            if not COMPARISONS[op_type](left, right):
-                return False
-            left = right
-        return True
-
-    def visit_Call(self, node: ast.Call) -> Any:
-        if not isinstance(node.func, ast.Name):
-            raise ValueError("Only named function calls are allowed")
-        func_name = node.func.id
-        if func_name not in MATH_FUNCTIONS:
-            raise ValueError(f"Unknown function: {func_name}")
-        args = [self.visit(arg) for arg in node.args]
-        return MATH_FUNCTIONS[func_name](*args)
-
-    def visit_IfExp(self, node: ast.IfExp) -> Any:
-        # Support ternary: a if condition else b
-        test = self.visit(node.test)
-        if test:
-            return self.visit(node.body)
-        return self.visit(node.orelse)
+# ---------------------------------------------------------------------------
+# Core evaluation
+# ---------------------------------------------------------------------------
 
 
 def safe_eval(expression: str) -> Any:
     """Safely evaluate a mathematical expression."""
-    try:
-        tree = ast.parse(expression, mode="eval")
-    except SyntaxError as e:
-        raise ValueError(f"Invalid syntax: {e}")
-    evaluator = SafeEvaluator()
-    return evaluator.visit(tree)
+    return simple_eval(
+        expression,
+        functions=MATH_FUNCTIONS,
+        names=MATH_CONSTANTS,
+    )
+
+
+# ---------------------------------------------------------------------------
+# @tool wrapper (existing API)
+# ---------------------------------------------------------------------------
 
 
 @tool
@@ -163,7 +80,6 @@ async def calculate(expression: str) -> ToolResult:
     - Functions: abs, round, min, max, sqrt, sin, cos, tan, log, log10, exp, floor, ceil
     - Constants: pi, e, tau, inf
     - Parentheses for grouping
-    - Ternary expressions: a if condition else b
 
     Examples:
     - "2 + 2" → 4
@@ -176,3 +92,52 @@ async def calculate(expression: str) -> ToolResult:
         return ToolResult(success=True, data=result)
     except Exception as e:
         return ToolResult(success=False, error=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Message-bus payload classes
+# ---------------------------------------------------------------------------
+
+
+@xmlify
+@dataclass
+class Calculate:
+    """Evaluate a mathematical expression using Python syntax."""
+    expression: str
+
+
+@xmlify
+@dataclass
+class CalculateResult:
+    """Result of a mathematical calculation."""
+    expression: str   # Echo back the input
+    result: str       # String representation ("4", "3.14159...")
+    error: str        # Empty on success, message on failure
+
+
+# ---------------------------------------------------------------------------
+# Message-bus handler
+# ---------------------------------------------------------------------------
+
+
+async def handle_calculate(
+    payload: Calculate, metadata: HandlerMetadata
+) -> HandlerResponse:
+    """Handler for the calculator listener — always responds to caller."""
+    try:
+        value = safe_eval(payload.expression)
+        return HandlerResponse.respond(
+            payload=CalculateResult(
+                expression=payload.expression,
+                result=str(value),
+                error="",
+            )
+        )
+    except Exception as e:
+        return HandlerResponse.respond(
+            payload=CalculateResult(
+                expression=payload.expression,
+                result="",
+                error=str(e),
+            )
+        )

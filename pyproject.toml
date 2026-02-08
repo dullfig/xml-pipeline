@@ -60,6 +60,9 @@ dependencies = [
     # HTTP client for LLM backends
     "httpx>=0.27",
 
+    # Safe math expression evaluation (calculator tool)
+    "simpleeval>=0.9",
+
     # Colored terminal output (minimal, no TUI)
     "termcolor>=2.0",
 ]
