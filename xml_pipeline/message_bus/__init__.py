@@ -4,12 +4,16 @@ message_bus — Stream-based message pump for AgentServer v2.1
 The message pump handles message flow through the organism:
 - YAML config → bootstrap → pump → handlers → responses → loop
 
-Key classes:
-    StreamPump      Main pump class (queue-backed, aiostream-powered)
-    SystemPipeline  Entry point for external messages (console, webhook)
-    ConfigLoader    Load organism.yaml and resolve imports
-    Listener        Runtime listener with handler and routing info
-    MessageState    Message flowing through pipeline steps
+Modules:
+    stream_pump     Main StreamPump class and bootstrap()
+    events          PumpEvent and subclasses (MessageReceived, AgentState, etc.)
+    pump_config     ListenerConfig, OrganismConfig, Listener dataclasses
+    config_loader   ConfigLoader — YAML parsing and import resolution
+    pipeline        Pipeline helpers (extract_payloads, make_xsd_validation, etc.)
+    singleton       Global pump singleton (get/set/reset_stream_pump)
+    message_state   MessageState, HandlerMetadata, HandlerResponse
+    system_pipeline External message injection (console, webhook)
+    thread_registry Opaque UUID ↔ call chain mapping
 
 Usage:
     from xml_pipeline.message_bus import StreamPump, SystemPipeline, bootstrap

@@ -21,17 +21,13 @@ CPU-Bound Handlers:
 from __future__ import annotations
 
 import asyncio
-import importlib
 import logging
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import AsyncIterable, Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xml_pipeline.crypto.identity import Identity
 
-import yaml
 from lxml import etree
 from aiostream import stream, pipe, operator
 
@@ -50,220 +46,33 @@ from xml_pipeline.memory import get_context_buffer
 pump_logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Event Hooks
-# ============================================================================
-
-@dataclass
-class PumpEvent:
-    """Base class for pump events."""
-    pass
-
-
-@dataclass
-class MessageReceivedEvent(PumpEvent):
-    """Fired when a message is received by a handler."""
-    thread_id: str
-    from_id: str
-    to_id: str
-    payload_type: str
-    payload: Any
-
-
-@dataclass
-class MessageSentEvent(PumpEvent):
-    """Fired when a handler sends a response."""
-    thread_id: str
-    from_id: str
-    to_id: str
-    payload_type: str
-    payload: Any
-
-
-@dataclass
-class AgentStateEvent(PumpEvent):
-    """Fired when an agent's processing state changes."""
-    agent_name: str
-    state: str  # "idle", "processing", "waiting", "error"
-    thread_id: Optional[str] = None
-
-
-@dataclass
-class ThreadEvent(PumpEvent):
-    """Fired when a thread is created or completed."""
-    thread_id: str
-    status: str  # "created", "active", "completed", "error", "killed"
-    participants: List[str] = field(default_factory=list)
-    error: Optional[str] = None
-
-
-@dataclass
-class ReloadEvent(PumpEvent):
-    """Fired when organism configuration is reloaded."""
-    success: bool
-    added_listeners: List[str] = field(default_factory=list)
-    removed_listeners: List[str] = field(default_factory=list)
-    updated_listeners: List[str] = field(default_factory=list)
-    error: Optional[str] = None
-
-
-EventCallback = Callable[[PumpEvent], None]
-
-
-# ============================================================================
-# Configuration (same as before)
-# ============================================================================
-
-@dataclass
-class ListenerConfig:
-    name: str
-    payload_class_path: str
-    handler_path: str
-    description: str
-    is_agent: bool = False
-    peers: List[str] = field(default_factory=list)
-    broadcast: bool = False
-    prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
-    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
-    timeout: float = 30.0  # Handler execution timeout in seconds
-    payload_class: type = field(default=None, repr=False)
-    handler: Callable = field(default=None, repr=False)
-
-
-@dataclass
-class OrganismConfig:
-    name: str
-    identity_path: str = ""
-    port: int = 8765
-    thread_scheduling: str = "breadth-first"
-    listeners: List[ListenerConfig] = field(default_factory=list)
-
-    # Concurrency tuning
-    max_concurrent_pipelines: int = 50    # Total concurrent messages in pipeline
-    max_concurrent_handlers: int = 20     # Concurrent handler invocations
-    max_concurrent_per_agent: int = 5     # Per-agent rate limit
-
-    # Token budget enforcement
-    max_tokens_per_thread: int = 100_000  # Max tokens per conversation thread
-
-    # LLM configuration (optional)
-    llm_config: Dict[str, Any] = field(default_factory=dict)
-
-    # Process pool configuration (for cpu_bound handlers)
-    process_pool_workers: int = 4
-    process_pool_max_tasks_per_child: int = 100
-    process_pool_enabled: bool = False
-
-    # Backend configuration (for shared state)
-    backend_type: str = "memory"  # "memory", "manager", "redis"
-    backend_redis_url: str = "redis://localhost:6379"
-    backend_redis_prefix: str = "xp:"
-
-    # OOB privileged channel
-    oob_enabled: bool = True
-    oob_bind: str = "127.0.0.1"
-    oob_port: int = 8766
-
-    # Auth (TOTP for OOB channel)
-    auth_totp_secret_env: str = ""
-    auth_totp_required: bool = False
-
-    # Peer tables from YAML config
-    # Each: {"name": str, "parent": str|None, "peers": {listener: [peers]}}
-    peer_table_configs: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class Listener:
-    name: str
-    payload_class: type
-    handler: Callable
-    description: str
-    is_agent: bool = False
-    peers: List[str] = field(default_factory=list)
-    broadcast: bool = False
-    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
-    handler_path: str = ""  # Import path for worker process
-    timeout: float = 30.0  # Handler execution timeout in seconds
-    schema: etree.XMLSchema = field(default=None, repr=False)
-    root_tag: str = ""
-    usage_instructions: str = ""  # Generated at registration for LLM agents
-
-
-# ============================================================================
-# Stream-Based Pipeline Steps
-# ============================================================================
-
-def wrap_step(step_fn: Callable) -> Callable:
-    """
-    Wrap an existing async step function for use with pipe.map.
-
-    Existing steps: async def step(state) -> state
-    We keep them as-is since pipe.map handles the iteration.
-    """
-    return step_fn
-
-
-async def extract_payloads(state: MessageState) -> AsyncIterable[MessageState]:
-    """
-    Fan-out step: Extract 1..N payloads from handler response.
-
-    This is used with pipe.flatmap — yields multiple states for each input.
-    """
-    if state.raw_bytes is None:
-        yield state
-        return
-
-    try:
-        # Wrap in dummy to handle multiple roots
-        wrapped = b"<dummy>" + state.raw_bytes + b"</dummy>"
-        tree = etree.fromstring(wrapped, parser=etree.XMLParser(recover=True))
-
-        children = list(tree)
-        if not children:
-            yield state
-            return
-
-        for child in children:
-            payload_bytes = etree.tostring(child)
-            yield MessageState(
-                raw_bytes=payload_bytes,
-                thread_id=state.thread_id,
-                from_id=state.from_id,
-                metadata=state.metadata.copy(),
-            )
-
-    except Exception:
-        # On parse failure, pass through as-is
-        yield state
-
-
-def make_xsd_validation(schema: etree.XMLSchema) -> Callable:
-    """Factory for XSD validation step with schema baked in."""
-    async def validate(state: MessageState) -> MessageState:
-        if state.payload_tree is None or state.error:
-            return state
-        try:
-            schema.assertValid(state.payload_tree)
-        except etree.DocumentInvalid as e:
-            state.error = f"XSD validation failed: {e}"
-        return state
-    return validate
-
-
-def make_deserialization(payload_class: type) -> Callable:
-    """Factory for deserialization step with class baked in."""
-    from third_party.xmlable import parse_element
-
-    async def deserialize(state: MessageState) -> MessageState:
-        if state.payload_tree is None or state.error:
-            return state
-        try:
-            state.payload = parse_element(payload_class, state.payload_tree)
-        except Exception as e:
-            state.error = f"Deserialization failed: {e}"
-        return state
-    return deserialize
+# Extracted modules — imported here for backward compatibility
+from xml_pipeline.message_bus.events import (  # noqa: F401
+    PumpEvent,
+    MessageReceivedEvent,
+    MessageSentEvent,
+    AgentStateEvent,
+    ThreadEvent,
+    ReloadEvent,
+    EventCallback,
+)
+from xml_pipeline.message_bus.pump_config import (  # noqa: F401
+    ListenerConfig,
+    OrganismConfig,
+    Listener,
+)
+from xml_pipeline.message_bus.pipeline import (  # noqa: F401
+    wrap_step,
+    extract_payloads,
+    make_xsd_validation,
+    make_deserialization,
+)
+from xml_pipeline.message_bus.config_loader import ConfigLoader  # noqa: F401
+from xml_pipeline.message_bus.singleton import (  # noqa: F401
+    get_stream_pump,
+    set_stream_pump,
+    reset_stream_pump,
+)
 
 
 # ============================================================================
@@ -1932,116 +1741,6 @@ class StreamPump:
 
 
 # ============================================================================
-# Config Loader (same as before)
-# ============================================================================
-
-class ConfigLoader:
-    @classmethod
-    def load(cls, path: str | Path) -> OrganismConfig:
-        with open(Path(path)) as f:
-            raw = yaml.safe_load(f)
-        return cls._parse(raw)
-
-    @classmethod
-    def _parse(cls, raw: dict) -> OrganismConfig:
-        org = raw.get("organism", {})
-
-        # Parse process pool config
-        pool = raw.get("process_pool", {})
-        process_pool_enabled = pool.get("enabled", False) if pool else False
-        process_pool_workers = pool.get("workers", 4) if pool else 4
-        process_pool_max_tasks = pool.get("max_tasks_per_child", 100) if pool else 100
-
-        # Parse backend config
-        backend = raw.get("backend", {})
-        backend_type = backend.get("type", "memory") if backend else "memory"
-        backend_redis_url = backend.get("redis_url", "redis://localhost:6379") if backend else "redis://localhost:6379"
-        backend_redis_prefix = backend.get("redis_prefix", "xp:") if backend else "xp:"
-
-        # Parse OOB config
-        oob = raw.get("oob", {})
-        oob_enabled = oob.get("enabled", True) if oob else True
-        oob_bind = oob.get("bind", "127.0.0.1") if oob else "127.0.0.1"
-        oob_port = oob.get("port", 8766) if oob else 8766
-
-        # Parse auth config
-        auth = raw.get("auth", {})
-        auth_totp_secret_env = auth.get("totp_secret_env", "") if auth else ""
-        auth_totp_required = auth.get("totp_required", False) if auth else False
-
-        # Parse peer tables
-        peer_table_configs: List[Dict[str, Any]] = []
-        for pt_raw in raw.get("peer_tables", []):
-            name = pt_raw.get("name", "")
-            parent = pt_raw.get("parent")
-            peers_dict: Dict[str, List[str]] = {}
-            for entry in pt_raw.get("entries", []):
-                listener_name = entry.get("listener", "")
-                peer_list = entry.get("peers", [])
-                if listener_name:
-                    peers_dict[listener_name] = peer_list
-            peer_table_configs.append({
-                "name": name,
-                "parent": parent,
-                "peers": peers_dict,
-            })
-
-        config = OrganismConfig(
-            name=org.get("name", "unnamed"),
-            identity_path=org.get("identity", ""),
-            port=org.get("port", 8765),
-            thread_scheduling=raw.get("thread_scheduling", "breadth-first"),
-            max_concurrent_pipelines=raw.get("max_concurrent_pipelines", 50),
-            max_concurrent_handlers=raw.get("max_concurrent_handlers", 20),
-            max_concurrent_per_agent=raw.get("max_concurrent_per_agent", 5),
-            max_tokens_per_thread=raw.get("max_tokens_per_thread", 100_000),
-            llm_config=raw.get("llm", {}),
-            process_pool_enabled=process_pool_enabled,
-            process_pool_workers=process_pool_workers,
-            process_pool_max_tasks_per_child=process_pool_max_tasks,
-            backend_type=backend_type,
-            backend_redis_url=backend_redis_url,
-            backend_redis_prefix=backend_redis_prefix,
-            oob_enabled=oob_enabled,
-            oob_bind=oob_bind,
-            oob_port=oob_port,
-            auth_totp_secret_env=auth_totp_secret_env,
-            auth_totp_required=auth_totp_required,
-            peer_table_configs=peer_table_configs,
-        )
-
-        for entry in raw.get("listeners", []):
-            lc = cls._parse_listener(entry)
-            cls._resolve_imports(lc)
-            config.listeners.append(lc)
-
-        return config
-
-    @classmethod
-    def _parse_listener(cls, raw: dict) -> ListenerConfig:
-        return ListenerConfig(
-            name=raw["name"],
-            payload_class_path=raw["payload_class"],
-            handler_path=raw["handler"],
-            description=raw["description"],
-            is_agent=raw.get("agent", False),
-            peers=raw.get("peers", []),
-            broadcast=raw.get("broadcast", False),
-            prompt=raw.get("prompt", ""),
-            cpu_bound=raw.get("cpu_bound", False),
-            timeout=float(raw.get("timeout_seconds", 30.0)),
-        )
-
-    @classmethod
-    def _resolve_imports(cls, lc: ListenerConfig) -> None:
-        mod, cls_name = lc.payload_class_path.rsplit(".", 1)
-        lc.payload_class = getattr(importlib.import_module(mod), cls_name)
-
-        mod, fn_name = lc.handler_path.rsplit(".", 1)
-        lc.handler = getattr(importlib.import_module(mod), fn_name)
-
-
-# ============================================================================
 # Bootstrap
 # ============================================================================
 
@@ -2057,92 +1756,3 @@ async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
     print(f"Listeners: {len(pump.listeners)}")
     print(f"Routing: {list(pump.routing_table.keys())}")
     return pump
-
-
-# ============================================================================
-# Example: Customizing the Pipeline
-# ============================================================================
-
-"""
-The beauty of aiostream: the pipeline is just a composition.
-You can easily insert, remove, or reorder stages.
-
-# Add logging between stages:
-| pipe.action(lambda s: print(f"After repair: {s.thread_id}"))
-
-# Add throttling:
-| pipe.map(some_step, task_limit=5)
-
-# Branch errors to a separate stream:
-errors, valid = stream.partition(source, lambda s: s.error is not None)
-
-# Merge multiple sources:
-combined = stream.merge(queue_source, oob_source, external_api_source)
-
-# Add timeout per message:
-| pipe.timeout(30.0)  # 30 second timeout per item
-
-# Rate limit the whole pipeline:
-| pipe.spaceout(0.1)  # 100ms between items
-"""
-
-
-# ============================================================================
-# Comparison: Old vs New
-# ============================================================================
-
-"""
-OLD (bus.py):
-    for payload in payloads:
-        await pipeline.process(payload)  # Sequential, recursive
-
-NEW (aiostream):
-    | pipe.flatmap(extract_payloads)     # Fan-out, parallel
-    | pipe.flatmap(dispatch, task_limit=20)  # Concurrent handlers
-
-The key difference:
-- Old: 3 tool calls = 3 sequential awaits, each blocking until complete
-- New: 3 tool calls = 3 items in stream, processed concurrently up to task_limit
-"""
-
-
-# ============================================================================
-# Global Singleton
-# ============================================================================
-
-_pump: Optional[StreamPump] = None
-
-
-def get_stream_pump() -> StreamPump:
-    """
-    Get the global StreamPump instance.
-
-    The pump is initialized via bootstrap() and set here.
-    Raises RuntimeError if called before bootstrap.
-    """
-    global _pump
-    if _pump is None:
-        raise RuntimeError(
-            "StreamPump not initialized. Call bootstrap() first."
-        )
-    return _pump
-
-
-def set_stream_pump(pump: StreamPump) -> None:
-    """
-    Set the global StreamPump instance.
-
-    Called by bootstrap() after creating the pump.
-    """
-    global _pump
-    _pump = pump
-
-
-def reset_stream_pump() -> None:
-    """
-    Reset the global StreamPump instance.
-
-    Useful for testing.
-    """
-    global _pump
-    _pump = None
