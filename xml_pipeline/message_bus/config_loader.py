@@ -79,6 +79,32 @@ class ConfigLoader:
                     "protocol": port_raw.get("protocol", "tcp"),
                 })
 
+        # Parse WASM tool configs
+        wasm_tool_configs: List[Dict[str, Any]] = []
+        for tool_raw in raw.get("tools", []):
+            wasm_tool_configs.append({
+                "name": tool_raw["name"],
+                "wasm_path": tool_raw["wasm_path"],
+                "wit_path": tool_raw["wit_path"],
+                "description": tool_raw.get("description", ""),
+                "capabilities": tool_raw.get("capabilities", []),
+                "memory_limit_mb": tool_raw.get("memory_limit_mb", 64),
+                "timeout_seconds": float(tool_raw.get("timeout_seconds", 5.0)),
+            })
+
+        # Parse WASM tool configs
+        wasm_tool_configs: List[Dict[str, Any]] = []
+        for tool_raw in raw.get("tools", []):
+            wasm_tool_configs.append({
+                "name": tool_raw["name"],
+                "wasm_path": tool_raw["wasm_path"],
+                "wit_path": tool_raw["wit_path"],
+                "description": tool_raw.get("description", ""),
+                "capabilities": tool_raw.get("capabilities", []),
+                "memory_limit_mb": tool_raw.get("memory_limit_mb", 64),
+                "timeout_seconds": float(tool_raw.get("timeout_seconds", 5.0)),
+            })
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -102,6 +128,7 @@ class ConfigLoader:
             auth_totp_required=auth_totp_required,
             peer_table_configs=peer_table_configs,
             network_ports=network_ports,
+            wasm_tool_configs=wasm_tool_configs,
         )
 
         for entry in raw.get("listeners", []):

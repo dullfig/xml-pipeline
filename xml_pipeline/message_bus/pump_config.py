@@ -78,6 +78,16 @@ class OrganismConfig:
     # Each: {"port": int, "bind": str, "listener": str, "protocol": str}
     network_ports: List[Dict[str, Any]] = field(default_factory=list)
 
+    # WASM tool configs from YAML
+    # Each: {"name": str, "wasm_path": str, "wit_path": str, "description": str,
+    #         "capabilities": list, "memory_limit_mb": int, "timeout_seconds": float}
+    wasm_tool_configs: List[Dict[str, Any]] = field(default_factory=list)
+
+    # WASM tool configs from YAML
+    # Each: {"name": str, "wasm_path": str, "wit_path": str, "description": str,
+    #         "capabilities": list, "memory_limit_mb": int, "timeout_seconds": float}
+    wasm_tool_configs: List[Dict[str, Any]] = field(default_factory=list)
+
 
 @dataclass
 class Listener:

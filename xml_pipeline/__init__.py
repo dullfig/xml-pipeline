@@ -18,6 +18,7 @@ from xml_pipeline.message_bus.events import (
 )
 from xml_pipeline.workers import get_worker_registry
 from xml_pipeline.network import get_port_gate
+from xml_pipeline.wasm import get_wasm_registry
 
 __all__ = [
     "__version__",
@@ -37,4 +38,6 @@ __all__ = [
     "get_worker_registry",
     # Network
     "get_port_gate",
+    # WASM
+    "get_wasm_registry",
 ]

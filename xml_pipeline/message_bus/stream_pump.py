@@ -180,6 +180,9 @@ class StreamPump:
         # Port gate (initialized in start())
         self._port_gate: Any = None
 
+        # WASM registry (initialized in start() if tools declared)
+        self._wasm_registry: Any = None
+
         # Shared backend for cross-process state
         self._shared_backend = None
         if config.backend_type != "memory":
@@ -248,6 +251,14 @@ class StreamPump:
             if stopped:
                 pump_logger.debug(
                     f"Thread {thread_id[:8]}... stopped {stopped} worker(s)"
+                )
+
+        # WASM instance cleanup
+        if self._wasm_registry:
+            wasm_cleaned = self._wasm_registry.cleanup_for_thread(thread_id)
+            if wasm_cleaned:
+                pump_logger.debug(
+                    f"Thread {thread_id[:8]}... released {wasm_cleaned} WASM instance(s)"
                 )
 
         # Emit thread completion event
@@ -745,6 +756,14 @@ class StreamPump:
         for sys_name, cls, handler, desc in system_listeners:
             if sys_name not in self.listeners:
                 self.register(sys_name, handler, cls, description=desc)
+
+        # --- 1b. WASM tools (before usage_instructions so they appear in peer schemas) ---
+        if self.config.wasm_tool_configs:
+            from xml_pipeline.wasm import register_wasm_tool, WasmRegistry, set_wasm_registry
+            self._wasm_registry = WasmRegistry()
+            set_wasm_registry(self._wasm_registry)
+            for tool_cfg in self.config.wasm_tool_configs:
+                register_wasm_tool(self, tool_cfg)
 
         # --- 2. Build usage_instructions (needs all listeners registered) ---
         for listener in self.listeners.values():
@@ -1574,6 +1593,13 @@ class StreamPump:
             from xml_pipeline.network.port_gate import reset_port_gate
             reset_port_gate()
             self._port_gate = None
+
+        # Shutdown WASM registry
+        if self._wasm_registry:
+            self._wasm_registry.shutdown_all()
+            from xml_pipeline.wasm import reset_wasm_registry
+            reset_wasm_registry()
+            self._wasm_registry = None
 
         # Stop all background workers
         if self._worker_registry:

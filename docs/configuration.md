@@ -45,6 +45,14 @@ network:                                        # Network port allocations
       listener: webhook-receiver                # Owning listener
       protocol: tcp                             # Default: tcp
 
+tools:                                          # WASM tool sandboxes
+  - name: sentiment                             # Becomes listener: sentiment.analyze
+    wasm_path: ./tools/sentiment.wasm
+    wit_path: ./tools/sentiment.wit
+    description: "Text sentiment analysis"
+    capabilities: [fetch, log]                  # Host functions available
+    timeout_seconds: 10
+
 listeners:
   - name: calculator.add
     payload_class: examples.calculator.AddPayload
@@ -196,6 +204,45 @@ gate = get_port_gate()
 alloc = gate.request(9000, "127.0.0.1", "webhook-receiver", "tcp")
 # ... use port ...
 gate.release(9000)
+```
+
+#### `tools`
+WASM tool declarations. Foreign code (AssemblyScript, Rust, etc.) runs in WASM sandboxes as first-class listeners. Each exported function in a WASM module maps to one listener. Empty or absent `tools:` section = zero WASM tools (same pattern as `network:`).
+
+- `name` (required): Tool name. Interfaces become listeners named `{name}.{interface}`.
+- `wasm_path` (required): Path to `.wasm` binary.
+- `wit_path` (required): Path to `.wit` interface definition.
+- `description`: Human-readable blurb for tool prompts.
+- `capabilities`: Host functions available to this module. Known: `fetch`, `kv`, `log`. Default: `[]` (no host access).
+- `memory_limit_mb`: WASM linear memory limit. Default: `64`.
+- `timeout_seconds`: Per-call execution timeout. Default: `5`.
+
+```yaml
+tools:
+  - name: calculator
+    wasm_path: ./tools/calculator.wasm
+    wit_path: ./tools/calculator.wit
+    description: "Math expression evaluator"
+    capabilities: [log]
+    memory_limit_mb: 64
+    timeout_seconds: 5
+
+  - name: sentiment
+    wasm_path: ./tools/sentiment.wasm
+    wit_path: ./tools/sentiment.wit
+    description: "Text sentiment analysis"
+    capabilities: [fetch, kv, log]
+    timeout_seconds: 10
+```
+
+WIT interface contract: each interface must define exactly one `*-request` record and one `*-response` record. Fields map to Python types (`string`→`str`, `u32`→`int`, `f64`→`float`, `bool`→`int`, `option<T>`→`str`, `list<T>`→`str`).
+
+The WASM registry is available programmatically via `get_wasm_registry()`:
+
+```python
+from xml_pipeline import get_wasm_registry
+
+registry = get_wasm_registry()
 ```
 
 #### `listeners`
