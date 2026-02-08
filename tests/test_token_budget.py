@@ -836,7 +836,7 @@ class TestBudgetWarningInjection:
         mock_pump._inject_raw = AsyncMock(side_effect=mock_inject)
         mock_pump._wrap_in_envelope = Mock(return_value=b"<envelope>warning</envelope>")
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             await router.complete(
                 model="test-model",
                 messages=[{"role": "user", "content": "Hi"}],
@@ -881,7 +881,7 @@ class TestBudgetWarningInjection:
         mock_pump._inject_raw = AsyncMock(side_effect=lambda *args, **kwargs: injected_messages.append(args))
         mock_pump._wrap_in_envelope = Mock(return_value=b"<envelope>warning</envelope>")
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             await router.complete(
                 model="test-model",
                 messages=[{"role": "user", "content": "Hi"}],
@@ -921,7 +921,7 @@ class TestBudgetWarningInjection:
         mock_pump.inject = AsyncMock()
         mock_pump._inject_raw = AsyncMock()
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             await router.complete(
                 model="test-model",
                 messages=[{"role": "user", "content": "Hi"}],
@@ -971,7 +971,7 @@ class TestBudgetWarningInjection:
         mock_pump._inject_raw = AsyncMock()
         mock_pump._wrap_in_envelope = Mock(side_effect=capture_wrap)
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             await router.complete(
                 model="test-model",
                 messages=[{"role": "user", "content": "Hi"}],
@@ -1016,7 +1016,7 @@ class TestBudgetWarningInjection:
         router.backends.append(mock_backend)
 
         # Pump not initialized - should not raise
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', side_effect=RuntimeError("Not initialized")):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', side_effect=RuntimeError("Not initialized")):
             response = await router.complete(
                 model="test-model",
                 messages=[{"role": "user", "content": "Hi"}],

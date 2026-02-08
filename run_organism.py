@@ -14,8 +14,8 @@ For the open-source xml-pipeline, use the CLI or programmatic API:
     xml-pipeline serve config/organism.yaml --port 8080
 
     # Programmatic
-    from xml_pipeline.message_bus import bootstrap
-    pump = await bootstrap("organism.yaml")
+    from xml_pipeline.message_bus.stream_pump import StreamPump
+    pump = await StreamPump.from_yaml("organism.yaml")
     await pump.run()
 
     # Interactive console example
@@ -46,8 +46,8 @@ For the open-source xml-pipeline, use:
      xml-pipeline serve config/organism.yaml --port 8080
 
   3. Programmatic API:
-     from xml_pipeline.message_bus import bootstrap
-     pump = await bootstrap("organism.yaml")
+     from xml_pipeline import StreamPump
+     pump = await StreamPump.from_yaml("organism.yaml")
      await pump.run()
 
   4. Console example (for testing):

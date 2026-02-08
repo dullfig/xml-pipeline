@@ -14,7 +14,8 @@ import uuid
 from unittest.mock import AsyncMock, patch
 
 from xml_pipeline.message_bus.todo_registry import TodoRegistry, TodoWatcher, get_todo_registry
-from xml_pipeline.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
+from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline.message_bus.pump_config import ListenerConfig, OrganismConfig
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 from xml_pipeline.primitives.todo import (
     TodoUntil, TodoComplete, TodoRegistered, TodoClosed,

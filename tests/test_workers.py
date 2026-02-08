@@ -24,13 +24,9 @@ from xml_pipeline.message_bus.message_state import (
     MessageState,
     TIMEOUT_ERROR,
 )
-from xml_pipeline.message_bus.stream_pump import (
-    StreamPump,
-    Listener,
-    ListenerConfig,
-    AgentStateEvent,
-    ThreadEvent,
-)
+from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline.message_bus.pump_config import Listener, ListenerConfig
+from xml_pipeline.message_bus.events import AgentStateEvent, ThreadEvent
 from xml_pipeline.message_bus.thread_registry import get_registry
 from xml_pipeline.message_bus.todo_registry import get_todo_registry
 from xml_pipeline.workers.registry import (

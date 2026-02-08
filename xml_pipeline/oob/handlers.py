@@ -135,7 +135,7 @@ def handle_register_listener(pump: StreamPump, el: etree._Element, request_id: s
             listener.usage_instructions = pump._build_usage_instructions(listener)
 
     # Emit reload event
-    from xml_pipeline.message_bus.stream_pump import ReloadEvent
+    from xml_pipeline.message_bus.events import ReloadEvent
     pump._emit_event(ReloadEvent(
         success=True,
         added_listeners=[name],
@@ -159,7 +159,7 @@ def handle_unregister_listener(pump: StreamPump, el: etree._Element, request_id:
     if not removed:
         return build_error(request_id, "NOT_FOUND", f"Listener '{name}' not found")
 
-    from xml_pipeline.message_bus.stream_pump import ReloadEvent
+    from xml_pipeline.message_bus.events import ReloadEvent
     pump._emit_event(ReloadEvent(
         success=True,
         removed_listeners=[name],
@@ -362,7 +362,7 @@ def handle_register_peer_table(pump: StreamPump, el: etree._Element, request_id:
     except Exception as e:
         return build_error(request_id, "REGISTRATION_ERROR", str(e))
 
-    from xml_pipeline.message_bus.stream_pump import ReloadEvent
+    from xml_pipeline.message_bus.events import ReloadEvent
     pump._emit_event(ReloadEvent(
         success=True,
         added_listeners=[f"table:{name}"],

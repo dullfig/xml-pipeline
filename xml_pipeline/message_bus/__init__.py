@@ -2,10 +2,10 @@
 message_bus — Stream-based message pump for AgentServer v2.1
 
 The message pump handles message flow through the organism:
-- YAML config → bootstrap → pump → handlers → responses → loop
+- YAML config → StreamPump.from_yaml() → pump → handlers → responses → loop
 
 Modules:
-    stream_pump     Main StreamPump class and bootstrap()
+    stream_pump     Main StreamPump class
     events          PumpEvent and subclasses (MessageReceived, AgentState, etc.)
     pump_config     ListenerConfig, OrganismConfig, Listener dataclasses
     config_loader   ConfigLoader — YAML parsing and import resolution
@@ -16,28 +16,32 @@ Modules:
     thread_registry Opaque UUID ↔ call chain mapping
 
 Usage:
-    from xml_pipeline.message_bus import StreamPump, SystemPipeline, bootstrap
+    from xml_pipeline.message_bus import StreamPump, SystemPipeline
 
-    pump = await bootstrap("config/organism.yaml")
+    pump = await StreamPump.from_yaml("config/organism.yaml")
     system = SystemPipeline(pump)
 
-    # Inject from console
     thread_id = await system.inject_console("@greeter Dan", user="admin")
-
     await pump.run()
 """
 
-from xml_pipeline.message_bus.stream_pump import (
-    StreamPump,
-    ConfigLoader,
+from xml_pipeline.message_bus.stream_pump import StreamPump
+
+from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+from xml_pipeline.message_bus.pump_config import (
     Listener,
     ListenerConfig,
     OrganismConfig,
-    bootstrap,
+)
+
+from xml_pipeline.message_bus.singleton import (
     get_stream_pump,
     set_stream_pump,
     reset_stream_pump,
-    # Event hooks
+)
+
+from xml_pipeline.message_bus.events import (
     PumpEvent,
     MessageReceivedEvent,
     MessageSentEvent,
@@ -87,7 +91,6 @@ __all__ = [
     "Listener",
     "ListenerConfig",
     "OrganismConfig",
-    "bootstrap",
     "get_stream_pump",
     "set_stream_pump",
     "reset_stream_pump",

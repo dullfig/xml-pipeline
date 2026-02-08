@@ -21,13 +21,9 @@ from lxml import etree
 from third_party.xmlable import xmlify
 
 from xml_pipeline.crypto.identity import Identity
-from xml_pipeline.message_bus.stream_pump import (
-    StreamPump,
-    OrganismConfig,
-    ReloadEvent,
-    MessageReceivedEvent,
-    ThreadEvent,
-)
+from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline.message_bus.pump_config import OrganismConfig
+from xml_pipeline.message_bus.events import ReloadEvent, MessageReceivedEvent, ThreadEvent
 from xml_pipeline.oob.auth import OOBAuthError, parse_request, verify_request, sign_payload
 from xml_pipeline.oob.protocol import (
     NS,
@@ -1235,7 +1231,7 @@ class TestOOBStreamPumpIntegration:
 
     def test_config_loader_parses_oob(self):
         """ConfigLoader._parse reads oob section from YAML dict."""
-        from xml_pipeline.message_bus.stream_pump import ConfigLoader
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
 
         raw = {
             "organism": {"name": "test"},
@@ -1253,7 +1249,7 @@ class TestOOBStreamPumpIntegration:
 
     def test_config_loader_oob_defaults(self):
         """ConfigLoader._parse uses OOB defaults when section is missing."""
-        from xml_pipeline.message_bus.stream_pump import ConfigLoader
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
 
         raw = {
             "organism": {"name": "test"},
@@ -1266,7 +1262,7 @@ class TestOOBStreamPumpIntegration:
 
     def test_config_loader_oob_disabled(self):
         """ConfigLoader._parse respects oob.enabled: false."""
-        from xml_pipeline.message_bus.stream_pump import ConfigLoader
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
 
         raw = {
             "organism": {"name": "test"},

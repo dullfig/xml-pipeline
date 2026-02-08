@@ -39,7 +39,8 @@ requires_aiostream = pytest.mark.skipif(
 
 # Check for stream_pump dependencies
 try:
-    from xml_pipeline.message_bus.stream_pump import StreamPump, Listener
+    from xml_pipeline.message_bus.stream_pump import StreamPump
+    from xml_pipeline.message_bus.pump_config import Listener
     from xml_pipeline.message_bus.steps.routing_resolution import make_routing_step
     HAS_STREAM_PUMP = True
 except ImportError:
@@ -434,7 +435,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_single_payload_yields_one(self):
         """Single payload should yield one state."""
-        from xml_pipeline.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.pipeline import extract_payloads
 
         state = MessageState(
             raw_bytes=b"<result>42</result>",
@@ -452,7 +453,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_multiple_payloads_yields_many(self, multi_payload_response):
         """Multiple payloads should yield multiple states."""
-        from xml_pipeline.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.pipeline import extract_payloads
 
         state = MessageState(
             raw_bytes=multi_payload_response,
@@ -471,7 +472,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_empty_response_yields_original(self):
         """Empty response should yield original state."""
-        from xml_pipeline.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.pipeline import extract_payloads
 
         state = MessageState(
             raw_bytes=b"",
@@ -487,7 +488,7 @@ class TestMultiPayloadExtraction:
     @pytest.mark.asyncio
     async def test_preserves_metadata(self):
         """Extracted payloads should preserve metadata."""
-        from xml_pipeline.message_bus.stream_pump import extract_payloads
+        from xml_pipeline.message_bus.pipeline import extract_payloads
 
         state = MessageState(
             raw_bytes=b"<a/><b/>",
@@ -538,7 +539,7 @@ class TestStepFactories:
     async def test_routing_factory(self):
         """Routing step should use injected routing table."""
         from xml_pipeline.message_bus.steps.routing_resolution import make_routing_step
-        from xml_pipeline.message_bus.stream_pump import Listener
+        from xml_pipeline.message_bus.pump_config import Listener
 
         # Create mock listener
         mock_listener = Listener(

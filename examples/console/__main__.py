@@ -15,11 +15,11 @@ from pathlib import Path
 
 async def main(config_path: str) -> None:
     """Boot organism and run console."""
-    from xml_pipeline.message_bus import bootstrap
+    from xml_pipeline.message_bus.stream_pump import StreamPump
     from .console import Console
 
     # Bootstrap the pump
-    pump = await bootstrap(config_path)
+    pump = await StreamPump.from_yaml(config_path)
 
     # Create and run console
     console = Console(pump)

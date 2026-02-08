@@ -19,13 +19,13 @@ def get_stream_pump() -> "StreamPump":
     """
     Get the global StreamPump instance.
 
-    The pump is initialized via bootstrap() and set here.
-    Raises RuntimeError if called before bootstrap.
+    The pump is set during StreamPump.start().
+    Raises RuntimeError if called before start().
     """
     global _pump
     if _pump is None:
         raise RuntimeError(
-            "StreamPump not initialized. Call bootstrap() first."
+            "StreamPump not initialized. Call pump.start() first."
         )
     return _pump
 
@@ -34,7 +34,7 @@ def set_stream_pump(pump: "StreamPump") -> None:
     """
     Set the global StreamPump instance.
 
-    Called by bootstrap() after creating the pump.
+    Called by StreamPump.start() after initialization.
     """
     global _pump
     _pump = pump

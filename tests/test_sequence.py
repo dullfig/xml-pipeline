@@ -300,7 +300,7 @@ class TestHandleSequenceStartValidation:
         mock_pump = MagicMock()
         mock_pump.listeners = {}
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             payload = SequenceStart(
                 steps="",  # Empty
                 payload="<Test/>",
@@ -327,7 +327,7 @@ class TestHandleSequenceStartValidation:
         mock_pump = MagicMock()
         mock_pump.listeners = {}  # No listeners registered
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             payload = SequenceStart(
                 steps="unknown_step",
                 payload="<Test/>",
@@ -443,7 +443,7 @@ class TestSequenceWithRealSteps:
         mock_pump.listeners = {"step1": MagicMock(), "step2": MagicMock()}
         mock_pump.register_generic_listener = MagicMock()
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             payload = SequenceStart(
                 steps="step1,step2",
                 payload="<Input/>",

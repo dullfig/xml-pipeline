@@ -105,7 +105,7 @@ async def handle_sequence_start(
     Creates an ephemeral listener for this sequence, stores state,
     and kicks off the first step.
     """
-    from xml_pipeline.message_bus.stream_pump import get_stream_pump
+    from xml_pipeline.message_bus.singleton import get_stream_pump
 
     # Parse and validate
     steps = [s.strip() for s in payload.steps.split(",") if s.strip()]
@@ -192,7 +192,7 @@ async def _handle_sequence_step_result(
 
     Called by the ephemeral listener when a step responds.
     """
-    from xml_pipeline.message_bus.stream_pump import get_stream_pump
+    from xml_pipeline.message_bus.singleton import get_stream_pump
 
     registry = get_sequence_registry()
     state = registry.get(seq_id)

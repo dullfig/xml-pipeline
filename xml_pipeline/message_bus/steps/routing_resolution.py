@@ -21,7 +21,7 @@ from typing import Dict, List, Callable, Awaitable, TYPE_CHECKING
 from xml_pipeline.message_bus.message_state import MessageState
 
 if TYPE_CHECKING:
-    from xml_pipeline.message_bus.stream_pump import Listener
+    from xml_pipeline.message_bus.pump_config import Listener
 
 
 def make_routing_step(

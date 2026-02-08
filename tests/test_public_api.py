@@ -11,7 +11,6 @@ Run with: pytest tests/test_public_api.py -v
 import pytest
 import asyncio
 import uuid
-import warnings
 from dataclasses import dataclass
 from unittest.mock import AsyncMock
 
@@ -37,10 +36,6 @@ class TestTopLevelImports:
     def test_import_stream_pump(self):
         from xml_pipeline import StreamPump
         assert StreamPump is not None
-
-    def test_import_bootstrap(self):
-        from xml_pipeline import bootstrap
-        assert callable(bootstrap)
 
     def test_import_events(self):
         from xml_pipeline import (
@@ -68,7 +63,7 @@ class TestTopLevelImports:
         expected = {
             "__version__",
             "HandlerResponse", "HandlerMetadata",
-            "StreamPump", "bootstrap",
+            "StreamPump",
             "PumpEvent", "MessageReceivedEvent", "MessageSentEvent",
             "AgentStateEvent", "ThreadEvent", "ReloadEvent",
             "get_worker_registry",
@@ -82,7 +77,7 @@ class TestTopLevelImports:
             HandlerResponse as HR,
             HandlerMetadata as HM,
         )
-        from xml_pipeline.message_bus.stream_pump import StreamPump as SP
+        from xml_pipeline.message_bus.stream_pump import StreamPump as SP  # canonical path
         assert HandlerResponse is HR
         assert HandlerMetadata is HM
         assert StreamPump is SP
@@ -130,7 +125,7 @@ class TestStreamPumpKwargsInit:
     def test_backward_compat_config_object(self):
         """Passing config= directly should still work."""
         from xml_pipeline import StreamPump
-        from xml_pipeline.message_bus.stream_pump import OrganismConfig
+        from xml_pipeline.message_bus.pump_config import OrganismConfig
         config = OrganismConfig(name="legacy", port=1234)
         pump = StreamPump(config=config)
         assert pump.config.name == "legacy"
@@ -262,7 +257,7 @@ class TestStreamPumpStart:
     @pytest.mark.asyncio
     async def test_start_sets_global_pump(self):
         from xml_pipeline import StreamPump
-        from xml_pipeline.message_bus.stream_pump import get_stream_pump
+        from xml_pipeline.message_bus.singleton import get_stream_pump
 
         pump = StreamPump(name="test-global")
         await pump.start()
@@ -348,29 +343,12 @@ class TestPayloadInject:
         assert returned_thread == my_thread
 
     @pytest.mark.asyncio
-    async def test_inject_raw_bytes_backward_compat(self):
-        from xml_pipeline import StreamPump
-        pump = StreamPump(name="test-legacy")
-        await pump.start()
-        await pump.queue.get()  # drain boot
-
-        thread_id = str(uuid.uuid4())
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            await pump.inject(b"<test/>", thread_id, from_id="user")
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "deprecated" in str(w[0].message).lower()
-
-        assert pump.queue.qsize() == 1
-
-    @pytest.mark.asyncio
-    async def test_inject_requires_payload_for_string_target(self):
+    async def test_inject_requires_payload(self):
         from xml_pipeline import StreamPump
         pump = StreamPump(name="test-err")
         await pump.start()
 
-        with pytest.raises(ValueError, match="payload is required"):
+        with pytest.raises(TypeError):
             await pump.inject("my-tool")
 
 
@@ -394,11 +372,11 @@ class TestFromYaml:
 
     @pytest.mark.asyncio
     async def test_from_yaml_matches_bootstrap(self):
-        """from_yaml() should produce equivalent results to bootstrap()."""
+        """from_yaml() should produce a fully configured pump."""
         from xml_pipeline import StreamPump
         pump = await StreamPump.from_yaml("config/organism.yaml")
 
-        # Same listeners as bootstrap() would create
+        # Same listeners as from_yaml() creates
         assert "greeter.greeting" in pump.routing_table
         assert "shouter.greetingresponse" in pump.routing_table
         assert "system.boot.boot" in pump.routing_table

@@ -290,7 +290,7 @@ class LLMRouter:
 
         # Get the stream pump (may not be initialized in tests)
         try:
-            from xml_pipeline.message_bus.stream_pump import get_stream_pump
+            from xml_pipeline.message_bus.singleton import get_stream_pump
             pump = get_stream_pump()
         except RuntimeError:
             # Pump not initialized - log and skip

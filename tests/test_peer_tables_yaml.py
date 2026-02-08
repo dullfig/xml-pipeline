@@ -19,11 +19,9 @@ from unittest.mock import MagicMock
 import pytest
 from third_party.xmlable import xmlify
 
-from xml_pipeline.message_bus.stream_pump import (
-    ConfigLoader,
-    OrganismConfig,
-    StreamPump,
-)
+from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline.message_bus.config_loader import ConfigLoader
+from xml_pipeline.message_bus.pump_config import OrganismConfig
 from xml_pipeline.message_bus.thread_registry import get_registry, reset_registry
 
 

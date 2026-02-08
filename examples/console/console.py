@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import uuid
 from typing import TYPE_CHECKING, Optional
 
 # Optional: prompt_toolkit for better terminal experience
@@ -81,7 +80,7 @@ class Console:
     Simple interactive console for xml-pipeline.
 
     Usage:
-        pump = await bootstrap("organism.yaml")
+        pump = await StreamPump.from_yaml("organism.yaml")
         console = Console(pump)
         await console.run()
     """
@@ -231,17 +230,7 @@ class Console:
 
         cprint(f"[sending to {target}]", Colors.DIM)
 
-        # Create thread and inject
-        thread_id = str(uuid.uuid4())
-
-        envelope = self.pump._wrap_in_envelope(
-            payload=payload,
-            from_id="console",
-            to_id=target,
-            thread_id=thread_id,
-        )
-
-        await self.pump.inject(envelope, thread_id=thread_id, from_id="console")
+        await self.pump.inject(target, payload, from_id="console")
 
     def _create_payload(self, listener, message: str):
         """Create payload instance from message text."""

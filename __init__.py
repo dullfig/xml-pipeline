@@ -13,7 +13,6 @@ from xml_pipeline.message_bus import (
     Listener,
     MessageState,
     HandlerMetadata,
-    bootstrap,
 )
 
 __all__ = [
@@ -22,7 +21,6 @@ __all__ = [
     "Listener",
     "MessageState",
     "HandlerMetadata",
-    "bootstrap",
 ]
 
 __version__ = "0.2.0"  # Bumped for aiostream pump

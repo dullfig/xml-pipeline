@@ -12,8 +12,9 @@ import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
-from xml_pipeline.message_bus import StreamPump, bootstrap, MessageState
-from xml_pipeline.message_bus.stream_pump import ConfigLoader, ListenerConfig, OrganismConfig, Listener
+from xml_pipeline.message_bus import StreamPump, MessageState
+from xml_pipeline.message_bus.config_loader import ConfigLoader
+from xml_pipeline.message_bus.pump_config import ListenerConfig, OrganismConfig, Listener
 from handlers.hello import Greeting, GreetingResponse, handle_greeting, handle_shout
 
 ENVELOPE_NS = "https://xml-pipeline.org/ns/envelope/v1"
@@ -45,7 +46,7 @@ def make_envelope(payload_xml: str, from_id: str, to_id: str, thread_id: str) ->
 
 
 class TestPumpBootstrap:
-    """Test ConfigLoader and bootstrap."""
+    """Test ConfigLoader and StreamPump.from_yaml."""
 
     def test_config_loader_parses_yaml(self):
         """ConfigLoader should parse organism.yaml correctly."""
@@ -61,9 +62,9 @@ class TestPumpBootstrap:
         assert "response-handler" in listener_names
 
     @pytest.mark.asyncio
-    async def test_bootstrap_creates_pump(self):
-        """bootstrap() should create a configured pump."""
-        pump = await bootstrap('config/organism.yaml')
+    async def test_from_yaml_creates_pump(self):
+        """from_yaml() should create a configured pump."""
+        pump = await StreamPump.from_yaml('config/organism.yaml')
 
         assert pump.config.name == "hello-world"
         assert len(pump.routing_table) == 8  # 3 user listeners + 5 system (boot, todo, todo-complete, sequence, buffer)
@@ -73,9 +74,9 @@ class TestPumpBootstrap:
         assert "system.boot.boot" in pump.routing_table  # Boot listener
 
     @pytest.mark.asyncio
-    async def test_bootstrap_generates_xsd(self):
-        """bootstrap() should generate XSD schemas for listeners."""
-        pump = await bootstrap('config/organism.yaml')
+    async def test_from_yaml_generates_xsd(self):
+        """from_yaml() should generate XSD schemas for listeners."""
+        pump = await StreamPump.from_yaml('config/organism.yaml')
 
         listener = pump.listeners["greeter"]
         assert listener.schema is not None
@@ -92,14 +93,14 @@ class TestPumpInjection:
     @pytest.mark.asyncio
     async def test_inject_adds_to_queue(self):
         """inject() should add a MessageState to the queue."""
-        pump = await bootstrap('config/organism.yaml')
+        pump = await StreamPump.from_yaml('config/organism.yaml')
 
         # Bootstrap already injects a boot message, so queue starts with 1
         initial_size = pump.queue.qsize()
         assert initial_size == 1  # Boot message
 
         thread_id = str(uuid.uuid4())
-        await pump.inject(b"<test/>", thread_id, from_id="user")
+        await pump._inject_raw(b"<test/>", thread_id, from_id="user")
 
         assert pump.queue.qsize() == initial_size + 1
 
@@ -167,7 +168,7 @@ class TestFullPipelineFlow:
                 thread_id=thread_id,
             )
 
-            await pump.inject(envelope, thread_id, from_id="user")
+            await pump._inject_raw(envelope, thread_id, from_id="user")
 
             # Run pump briefly to process the message
             pump._running = True
@@ -241,7 +242,7 @@ class TestFullPipelineFlow:
                 thread_id=thread_id,
             )
 
-            await pump.inject(envelope, thread_id, from_id="user")
+            await pump._inject_raw(envelope, thread_id, from_id="user")
 
             # Run pump briefly
             pump._running = True
@@ -277,7 +278,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_invalid_xml_error(self):
         """Malformed XML should set error, not crash."""
-        pump = await bootstrap('config/organism.yaml')
+        pump = await StreamPump.from_yaml('config/organism.yaml')
 
         errors = []
         original_handle_errors = pump._handle_errors
@@ -291,7 +292,7 @@ class TestErrorHandling:
 
         # Inject malformed XML
         thread_id = str(uuid.uuid4())
-        await pump.inject(b"<not valid xml", thread_id, from_id="user")
+        await pump._inject_raw(b"<not valid xml", thread_id, from_id="user")
 
         # Run pump
         pump._running = True
@@ -319,7 +320,7 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_unknown_route_error(self):
         """Message to unknown listener should error gracefully."""
-        pump = await bootstrap('config/organism.yaml')
+        pump = await StreamPump.from_yaml('config/organism.yaml')
 
         errors = []
         original_handle_errors = pump._handle_errors
@@ -340,7 +341,7 @@ class TestErrorHandling:
             thread_id=thread_id,
         )
 
-        await pump.inject(envelope, thread_id, from_id="user")
+        await pump._inject_raw(envelope, thread_id, from_id="user")
 
         # Run pump
         pump._running = True
@@ -490,7 +491,7 @@ class TestThreadRoutingFlow:
                 thread_id=thread_id,
             )
 
-            await pump.inject(envelope, thread_id, from_id="console")
+            await pump._inject_raw(envelope, thread_id, from_id="console")
 
             # Run pump to process all messages in chain
             pump._running = True
@@ -636,7 +637,7 @@ class TestThreadRoutingFlow:
                         thread_id=thread_id,
                     )
 
-                    await pump.inject(envelope, thread_id, from_id="console")
+                    await pump._inject_raw(envelope, thread_id, from_id="console")
 
                     # Run pipeline
                     pump._running = True
@@ -722,7 +723,7 @@ class TestManualPumpConfiguration:
             thread_id=thread_id,
         )
 
-        await pump.inject(envelope, thread_id, from_id="tester")
+        await pump._inject_raw(envelope, thread_id, from_id="tester")
 
         # Run pump
         pump._running = True

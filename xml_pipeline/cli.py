@@ -18,8 +18,7 @@ from pathlib import Path
 
 def cmd_run(args: argparse.Namespace) -> int:
     """Run an organism from config."""
-    from xml_pipeline.config.loader import load_config
-    from xml_pipeline.message_bus import bootstrap
+    from xml_pipeline.message_bus.stream_pump import StreamPump
 
     config_path = Path(args.config)
     if not config_path.exists():
@@ -27,8 +26,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        config = load_config(config_path)
-        asyncio.run(bootstrap(config))
+        asyncio.run(StreamPump.from_yaml(str(config_path)))
         return 0
     except KeyboardInterrupt:
         print("\nShutdown requested.")
@@ -47,7 +45,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print("Install with: pip install xml-pipeline[server]", file=sys.stderr)
         return 1
 
-    from xml_pipeline.message_bus import bootstrap
+    from xml_pipeline.message_bus.stream_pump import StreamPump
 
     config_path = Path(args.config)
     if not config_path.exists():
@@ -59,7 +57,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         from xml_pipeline.server import create_app
 
         # Bootstrap the pump
-        pump = await bootstrap(str(config_path))
+        pump = await StreamPump.from_yaml(str(config_path))
 
         # Create FastAPI app
         app = create_app(pump)

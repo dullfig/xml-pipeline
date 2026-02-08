@@ -444,7 +444,7 @@ class TestHandleBufferStartValidation:
         mock_pump = MagicMock()
         mock_pump.listeners = {}
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             payload = BufferStart(
                 target="worker",
                 items="",  # Empty
@@ -470,7 +470,7 @@ class TestHandleBufferStartValidation:
         mock_pump = MagicMock()
         mock_pump.listeners = {}  # No listeners
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             payload = BufferStart(
                 target="unknown_worker",
                 items="item1\nitem2",
@@ -532,7 +532,7 @@ class TestBufferCollectVsFireAndForget:
         mock_thread_registry.lookup = MagicMock(return_value="root.parent")
         mock_thread_registry.get_or_create = MagicMock(return_value="worker-uuid")
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             with patch('xml_pipeline.message_bus.thread_registry.get_registry', return_value=mock_thread_registry):
                 payload = BufferStart(
                     target="worker",
@@ -570,7 +570,7 @@ class TestBufferCollectVsFireAndForget:
         mock_thread_registry.lookup = MagicMock(return_value="root.parent")
         mock_thread_registry.get_or_create = MagicMock(return_value="worker-uuid")
 
-        with patch('xml_pipeline.message_bus.stream_pump.get_stream_pump', return_value=mock_pump):
+        with patch('xml_pipeline.message_bus.singleton.get_stream_pump', return_value=mock_pump):
             with patch('xml_pipeline.message_bus.thread_registry.get_registry', return_value=mock_thread_registry):
                 payload = BufferStart(
                     target="worker",

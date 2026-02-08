@@ -20,7 +20,8 @@ if TYPE_CHECKING:
     import websockets
 
     from xml_pipeline.crypto.identity import Identity
-    from xml_pipeline.message_bus.stream_pump import PumpEvent, StreamPump
+    from xml_pipeline.message_bus.events import PumpEvent
+    from xml_pipeline.message_bus.stream_pump import StreamPump
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +257,7 @@ class OOBServer:
 
     async def _deliver_push(self, event: PumpEvent) -> None:
         """Convert a PumpEvent to push XML and send to matching subscribers."""
-        from xml_pipeline.message_bus.stream_pump import (
+        from xml_pipeline.message_bus.events import (
             MessageReceivedEvent,
             MessageSentEvent,
             AgentStateEvent,

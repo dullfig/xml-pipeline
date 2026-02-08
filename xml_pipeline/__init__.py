@@ -7,9 +7,8 @@ __version__ = "0.4.0"
 # Public API re-exports — stable symbols for downstream consumers.
 # Use these instead of reaching into submodules directly.
 from xml_pipeline.message_bus.message_state import HandlerResponse, HandlerMetadata
-from xml_pipeline.message_bus.stream_pump import (
-    StreamPump,
-    bootstrap,
+from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline.message_bus.events import (
     PumpEvent,
     MessageReceivedEvent,
     MessageSentEvent,
@@ -26,7 +25,6 @@ __all__ = [
     "HandlerMetadata",
     # Pump
     "StreamPump",
-    "bootstrap",
     # Events
     "PumpEvent",
     "MessageReceivedEvent",

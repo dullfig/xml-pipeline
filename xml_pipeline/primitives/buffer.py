@@ -135,7 +135,7 @@ async def handle_buffer_start(
     Creates N sibling threads, dispatches items to workers,
     and sets up result collection.
     """
-    from xml_pipeline.message_bus.stream_pump import get_stream_pump
+    from xml_pipeline.message_bus.singleton import get_stream_pump
 
     # Parse items
     items = [item.strip() for item in payload.items.split("\n") if item.strip()]
@@ -247,7 +247,7 @@ async def _handle_buffer_result(
 
     Called by the ephemeral listener when a worker responds.
     """
-    from xml_pipeline.message_bus.stream_pump import get_stream_pump
+    from xml_pipeline.message_bus.singleton import get_stream_pump
 
     buffer_registry = get_buffer_registry()
     state = buffer_registry.get(buf_id)

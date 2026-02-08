@@ -329,7 +329,8 @@ class TestPumpIntegration:
     async def test_buffer_records_messages_during_flow(self):
         """Context buffer should record messages as they flow through pump."""
         from unittest.mock import AsyncMock, patch
-        from xml_pipeline.message_bus.stream_pump import StreamPump, ListenerConfig, OrganismConfig
+        from xml_pipeline.message_bus.stream_pump import StreamPump
+        from xml_pipeline.message_bus.pump_config import ListenerConfig, OrganismConfig
         from xml_pipeline.message_bus.message_state import HandlerResponse
         from xml_pipeline.llm.backend import LLMResponse
 
@@ -386,7 +387,7 @@ class TestPumpIntegration:
                 <Greeting xmlns=""><Name>Alice</Name></Greeting>
             </message>""".encode()
 
-            await pump.inject(envelope, thread_id, from_id="user")
+            await pump._inject_raw(envelope, thread_id, from_id="user")
 
             # Run pump to process
             pump._running = True

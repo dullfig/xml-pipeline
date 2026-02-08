@@ -46,8 +46,7 @@ from xml_pipeline.memory import get_context_buffer
 pump_logger = logging.getLogger(__name__)
 
 
-# Extracted modules — imported here for backward compatibility
-from xml_pipeline.message_bus.events import (  # noqa: F401
+from xml_pipeline.message_bus.events import (
     PumpEvent,
     MessageReceivedEvent,
     MessageSentEvent,
@@ -56,23 +55,19 @@ from xml_pipeline.message_bus.events import (  # noqa: F401
     ReloadEvent,
     EventCallback,
 )
-from xml_pipeline.message_bus.pump_config import (  # noqa: F401
+from xml_pipeline.message_bus.pump_config import (
     ListenerConfig,
     OrganismConfig,
     Listener,
 )
-from xml_pipeline.message_bus.pipeline import (  # noqa: F401
+from xml_pipeline.message_bus.pipeline import (
     wrap_step,
     extract_payloads,
     make_xsd_validation,
     make_deserialization,
 )
-from xml_pipeline.message_bus.config_loader import ConfigLoader  # noqa: F401
-from xml_pipeline.message_bus.singleton import (  # noqa: F401
-    get_stream_pump,
-    set_stream_pump,
-    reset_stream_pump,
-)
+from xml_pipeline.message_bus.config_loader import ConfigLoader
+from xml_pipeline.message_bus.singleton import set_stream_pump
 
 
 # ============================================================================
@@ -704,7 +699,7 @@ class StreamPump:
         """
         Run the full bootstrap ceremony (public API).
 
-        This encapsulates everything that bootstrap() does after pump
+        This performs the full initialization sequence after pump
         creation:
         1. Register system listeners (Boot, Todo, Sequence, Buffer)
         2. Build usage_instructions for all agents (second pass)
@@ -1476,8 +1471,8 @@ class StreamPump:
 
     async def inject(
         self,
-        target: str | bytes,
-        payload: Any = None,
+        target: str,
+        payload: Any,
         *,
         from_id: str = "external",
         thread_id: str | None = None,
@@ -1486,11 +1481,9 @@ class StreamPump:
         """
         Inject a message into the pump (public API).
 
-        Accepts either a payload object (preferred) or raw bytes (legacy).
-
         Args:
-            target: Target listener name, OR raw bytes for backward compat.
-            payload: @xmlify dataclass instance (required when target is str).
+            target: Target listener name.
+            payload: @xmlify dataclass instance.
             from_id: Sender identity (default "external").
             thread_id: Thread UUID. Created automatically if not provided.
             routing_table: Named peer table for thread-scoped privilege
@@ -1503,39 +1496,14 @@ class StreamPump:
             The thread_id used for the message.
 
         Examples:
-            # Preferred: payload object
             await pump.inject("greeter", Greeting(name="Alice"))
 
-            # With explicit thread
             await pump.inject("greeter", Greeting(name="Alice"),
                               thread_id=my_thread)
 
-            # With peer table (privilege tier)
             await pump.inject("concierge", Greeting(name="Alice"),
                               routing_table="premium")
-
-            # Legacy: raw bytes (backward compat, deprecated)
-            await pump.inject(envelope_bytes, thread_id="...", from_id="system")
         """
-        # Backward compat: detect raw bytes as first arg
-        if isinstance(target, bytes):
-            import warnings
-            warnings.warn(
-                "inject(raw_bytes, thread_id, from_id) is deprecated. "
-                "Use inject(target, payload) or _inject_raw() instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # In legacy mode, payload holds thread_id and from_id comes from kwargs
-            # But the old signature was inject(raw_bytes, thread_id, from_id)
-            # where positional: raw_bytes=target, thread_id=payload, from_id=from_id
-            legacy_thread_id = payload if isinstance(payload, str) else thread_id
-            await self._inject_raw(target, thread_id=legacy_thread_id or "", from_id=from_id)
-            return legacy_thread_id or ""
-
-        # New API: wrap payload in envelope and inject
-        if payload is None:
-            raise ValueError("payload is required when target is a listener name")
 
         if thread_id is None:
             registry = get_registry()
@@ -1740,19 +1708,3 @@ class StreamPump:
         return pump
 
 
-# ============================================================================
-# Bootstrap
-# ============================================================================
-
-async def bootstrap(config_path: str = "config/organism.yaml") -> StreamPump:
-    """
-    Load config, create pump, initialize root thread, and inject boot message.
-
-    This is a convenience wrapper around ``StreamPump.from_yaml()``.
-    Kept for backward compatibility.
-    """
-    pump = await StreamPump.from_yaml(config_path)
-    print(f"Organism: {pump.config.name}")
-    print(f"Listeners: {len(pump.listeners)}")
-    print(f"Routing: {list(pump.routing_table.keys())}")
-    return pump
