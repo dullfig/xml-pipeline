@@ -2,6 +2,10 @@
 Shell tool - sandboxed command execution.
 
 Provides controlled command execution with security restrictions.
+
+DISABLED: This tool is disabled pending security audit. All @tool functions
+return an error immediately. Validation logic remains testable.
+See docs/readiness-gaps.md for details.
 """
 
 from __future__ import annotations
@@ -12,6 +16,11 @@ from typing import Optional, List
 
 from .base import tool, ToolResult
 
+
+# ── Security gate ────────────────────────────────────────────────────────
+# Flip to True only after security audit confirms no attack vectors.
+TOOL_ENABLED = False
+_DISABLED_MSG = "Shell tool is disabled pending security audit. See docs/readiness-gaps.md."
 
 # Security configuration
 ALLOWED_COMMANDS: List[str] = []  # Empty = check blocklist only
@@ -53,19 +62,28 @@ def _validate_command(command: str) -> Optional[str]:
             return "Empty command"
         
         executable = parts[0].lower()
-        
+
         # Strip path to get just the command name
         if "/" in executable or "\\" in executable:
             executable = executable.split("/")[-1].split("\\")[-1]
-        
+
+        # Strip common executable extensions
+        for ext in (".exe", ".cmd", ".bat", ".com", ".ps1"):
+            if executable.endswith(ext):
+                executable = executable[:-len(ext)]
+                break
+
         # Check allowlist first (if configured)
         if ALLOWED_COMMANDS:
             if executable not in ALLOWED_COMMANDS:
                 return f"Command '{executable}' not in allowlist"
-        
-        # Check blocklist
-        if executable in BLOCKED_COMMANDS:
-            return f"Command '{executable}' is blocked for security"
+
+        # Check blocklist — both exact match and suffix match.
+        # Suffix match catches mangled Windows paths where shlex.split
+        # eats backslashes: C:\Windows\System32\cmd.exe → "windowssystem32cmd"
+        for blocked in BLOCKED_COMMANDS:
+            if executable == blocked or executable.endswith(blocked):
+                return f"Command '{blocked}' is blocked for security"
         
         # Check for shell operators that could be dangerous
         dangerous_operators = [";", "&&", "||", "|", "`", "$(", "${"]
@@ -106,6 +124,9 @@ async def run_command(
         - Timeout enforced
         - Output size limited to 1 MB
     """
+    if not TOOL_ENABLED:
+        return ToolResult(success=False, error=_DISABLED_MSG)
+
     # Validate command
     if error := _validate_command(command):
         return ToolResult(success=False, error=error)

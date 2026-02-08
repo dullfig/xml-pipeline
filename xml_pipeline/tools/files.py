@@ -2,6 +2,10 @@
 File tools - sandboxed file system operations.
 
 All paths are validated against configured allowed directories.
+
+DISABLED: This tool is disabled pending security audit. All @tool functions
+return an error immediately. Validation logic remains testable.
+See docs/readiness-gaps.md for details.
 """
 
 from __future__ import annotations
@@ -12,6 +16,11 @@ from typing import Optional, List
 
 from .base import tool, ToolResult
 
+
+# ── Security gate ────────────────────────────────────────────────────────
+# Flip to True only after security audit confirms no attack vectors.
+TOOL_ENABLED = False
+_DISABLED_MSG = "File tools are disabled pending security audit. See docs/readiness-gaps.md."
 
 # Security configuration
 _allowed_paths: List[Path] = []
@@ -53,6 +62,8 @@ async def read_file(
     offset: int = 0,
     limit: Optional[int] = None,
 ) -> ToolResult:
+    if not TOOL_ENABLED:
+        return ToolResult(success=False, error=_DISABLED_MSG)
     error, resolved = _validate_path(path)
     if error:
         return ToolResult(success=False, error=error)
@@ -98,6 +109,8 @@ async def write_file(
     binary: bool = False,
     create_dirs: bool = False,
 ) -> ToolResult:
+    if not TOOL_ENABLED:
+        return ToolResult(success=False, error=_DISABLED_MSG)
     error, resolved = _validate_path(path)
     if error:
         return ToolResult(success=False, error=error)
@@ -135,6 +148,8 @@ async def list_dir(
     recursive: bool = False,
     include_hidden: bool = False,
 ) -> ToolResult:
+    if not TOOL_ENABLED:
+        return ToolResult(success=False, error=_DISABLED_MSG)
     error, resolved = _validate_path(path)
     if error:
         return ToolResult(success=False, error=error)
@@ -172,6 +187,8 @@ async def list_dir(
 
 @tool
 async def delete_file(path: str, recursive: bool = False) -> ToolResult:
+    if not TOOL_ENABLED:
+        return ToolResult(success=False, error=_DISABLED_MSG)
     error, resolved = _validate_path(path)
     if error:
         return ToolResult(success=False, error=error)
