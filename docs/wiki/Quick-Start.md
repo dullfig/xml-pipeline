@@ -53,7 +53,7 @@ listeners:
 ```python
 from dataclasses import dataclass
 from third_party.xmlable import xmlify
-from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline import HandlerMetadata, HandlerResponse
 
 @xmlify
 @dataclass

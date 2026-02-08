@@ -26,9 +26,36 @@ organism:
   name: "my-organism"              # Human-readable name (required)
   port: 8765                       # WebSocket port (optional)
   identity: "config/identity.key"  # Ed25519 private key path (optional)
+  max_tokens_per_thread: 100000    # Token budget per thread (optional)
   tls:                             # TLS settings (optional)
     cert: "certs/fullchain.pem"
     key: "certs/privkey.pem"
+
+# ============================================================
+# OOB SECTION (Optional)
+# Privileged local control channel for hot-reload and admin
+# ============================================================
+oob:
+  enabled: true                    # Enable OOB channel (default: true in YAML)
+  bind: "127.0.0.1"               # Localhost-only by default
+  port: 8766                      # Separate port from main bus
+
+# ============================================================
+# THREAD SCHEDULING (Optional)
+# ============================================================
+thread_scheduling: "breadth-first"   # breadth-first | depth-first
+
+# ============================================================
+# META SECTION (Optional)
+# Introspection controls
+# ============================================================
+meta:
+  enabled: true
+  allow_list_capabilities: true
+  allow_schema_requests: "admin"   # "admin" | "authenticated" | "none"
+  allow_example_requests: "admin"
+  allow_prompt_requests: "admin"
+  allow_remote: false
 
 # ============================================================
 # LLM SECTION
@@ -125,8 +152,37 @@ gateways:
 | `name` | string | Yes | Human-readable organism name |
 | `port` | int | No | WebSocket server port |
 | `identity` | path | No | Ed25519 private key for signing |
+| `max_tokens_per_thread` | int | No | Token budget per thread (default: 100000) |
 | `tls.cert` | path | No | TLS certificate path |
 | `tls.key` | path | No | TLS private key path |
+
+### oob
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `enabled` | bool | No | Enable OOB channel (default: true in YAML) |
+| `bind` | string | No | Bind address (default: `127.0.0.1`) |
+| `port` | int | No | OOB port (default: 8766) |
+
+The OOB channel provides a localhost-only privileged control plane for hot-reload, listener management, introspection, peer table management, and runtime administration. It runs on a separate port from the main message bus and uses Ed25519 signature verification (skipped in dev mode without an identity key).
+
+### meta
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `enabled` | bool | No | Enable meta introspection (default: true) |
+| `allow_list_capabilities` | bool | No | Allow listing capabilities |
+| `allow_schema_requests` | string | No | Who can request schemas: `admin`, `authenticated`, `none` |
+| `allow_example_requests` | string | No | Who can request examples |
+| `allow_prompt_requests` | string | No | Who can request prompts |
+| `allow_remote` | bool | No | Allow federation peers to query meta |
+
+### thread_scheduling
+
+| Value | Description |
+|-------|-------------|
+| `breadth-first` | Fair round-robin (default) — prevents deep branch starvation |
+| `depth-first` | Aggressive dive into branches |
 
 ### llm.backends[]
 
@@ -188,6 +244,23 @@ Validate your configuration without running:
 ```bash
 xml-pipeline check config/organism.yaml
 ```
+
+## Peer Tables
+
+Peer tables are **not** configured in YAML. They are registered programmatically via the public API or via OOB commands at runtime:
+
+```python
+# Programmatic registration
+pump.register_peer_table("premium", {
+    "concierge": ["calculator", "search", "billing"],
+})
+
+# Modify at runtime
+pump.modify_peer_table("premium", "concierge",
+                       grant=["summarizer"], revoke=["search"])
+```
+
+See [Peer Tables](../../api.md#peer-tables) in the API reference for details.
 
 ## See Also
 

@@ -25,6 +25,8 @@ See [[Why XML]] for the full rationale.
 | **LLM Router** | Multi-backend routing with failover, rate limiting, retries |
 | **Multiprocess Ready** | CPU-bound handlers run in ProcessPoolExecutor |
 | **Shared State** | Redis/Manager backends for distributed deployments |
+| **OOB Channel** | Privileged localhost-only control plane for hot-reload |
+| **Peer Tables** | Thread-scoped privilege tiers (e.g., premium/basic) |
 
 ## Quick Links
 
@@ -36,7 +38,6 @@ See [[Why XML]] for the full rationale.
 ### Guides
 - [[Writing Handlers]] — Create message handlers
 - [[Using the LLM Router]] — Call language models from handlers
-- [[Multiprocess Handlers]] — Run CPU-bound work in separate processes
 
 ### Architecture
 - [[Architecture Overview]] — How xml-pipeline works
@@ -46,12 +47,12 @@ See [[Why XML]] for the full rationale.
 
 ### Tutorials
 - [[Hello World Tutorial]] — Build a greeting agent step by step
-- [[Calculator Tool Tutorial]] — Create a tool that agents can call
 
 ### Reference
 - [[Handler Contract]] — Handler function signature and return types
 - [[Configuration Reference]] — Complete organism.yaml specification
 - [[CLI Reference]] — Command-line interface
+- [Public API Reference](../api.md) — Stable Python imports for downstream consumers
 
 ## Version
 

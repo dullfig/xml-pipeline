@@ -31,6 +31,9 @@ pip install xml-pipeline[redis]
 # With web search capability
 pip install xml-pipeline[search]
 
+# With codebase intelligence (Premium Librarian)
+pip install xml-pipeline[librarian]
+
 # With interactive console (for examples)
 pip install xml-pipeline[console]
 

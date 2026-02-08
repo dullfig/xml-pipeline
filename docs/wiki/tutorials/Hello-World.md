@@ -77,7 +77,7 @@ class ConsoleOutput:
 Create `handlers/greeter.py`:
 
 ```python
-from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline import HandlerMetadata, HandlerResponse
 from handlers.payloads import Greeting, GreetingResponse, ShoutRequest
 
 async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> HandlerResponse:
@@ -98,7 +98,7 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
 Create `handlers/shouter.py`:
 
 ```python
-from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline import HandlerMetadata, HandlerResponse
 from handlers.payloads import ShoutRequest, ConsoleOutput
 
 async def handle_shout(payload: ShoutRequest, metadata: HandlerMetadata) -> HandlerResponse:
@@ -117,7 +117,7 @@ async def handle_shout(payload: ShoutRequest, metadata: HandlerMetadata) -> Hand
 Create `handlers/output.py`:
 
 ```python
-from xml_pipeline.message_bus.message_state import HandlerMetadata
+from xml_pipeline import HandlerMetadata
 from handlers.payloads import ConsoleOutput
 
 async def handle_output(payload: ConsoleOutput, metadata: HandlerMetadata) -> None:
@@ -180,34 +180,17 @@ Create `test_greeting.py`:
 
 ```python
 import asyncio
-from xml_pipeline.message_bus.stream_pump import StreamPump
-from xml_pipeline.config.loader import load_config
+from xml_pipeline import StreamPump
+from handlers.payloads import Greeting
 
 async def main():
-    # Load configuration
-    config = load_config("config/organism.yaml")
-
-    # Create and start the pump
-    pump = StreamPump(config)
-    await pump.start()
+    # Create the pump using the YAML config
+    pump = await StreamPump.from_yaml("config/organism.yaml")
 
     print("Organism started! Injecting greeting...")
 
-    # Create a greeting message
-    greeting_xml = b"""<?xml version="1.0"?>
-    <message xmlns="https://xml-pipeline.org/ns/envelope/v1">
-      <meta>
-        <from>test</from>
-        <to>greeter</to>
-      </meta>
-      <greeting>
-        <name>Alice</name>
-      </greeting>
-    </message>
-    """
-
-    # Inject the message
-    await pump.inject(greeting_xml, from_id="test")
+    # Inject a typed payload — no raw XML needed
+    await pump.inject("greeter", Greeting(name="Alice"))
 
     # Give it time to process
     await asyncio.sleep(1)
@@ -241,13 +224,11 @@ Let's trace the message flow:
 
 ### 1. Message Injection
 
-```xml
-<greeting>
-  <name>Alice</name>
-</greeting>
+```python
+await pump.inject("greeter", Greeting(name="Alice"))
 ```
 
-Injected with `from=test`, `to=greeter`.
+The pump serializes the payload to XML and wraps it in an envelope with `from=external`, `to=greeter`.
 
 ### 2. Pipeline Processing
 
@@ -277,7 +258,7 @@ routing          → target: greeter
 # greeter receives:
 payload = Greeting(name="Alice")
 metadata.thread_id = "abc-123"
-metadata.from_id = "test"
+metadata.from_id = "external"
 ```
 
 ### 4. Response Processing
@@ -334,7 +315,7 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata):
 Convert greeter to use an LLM for creative greetings:
 
 ```python
-from xml_pipeline.platform.llm_api import complete
+from xml_pipeline.llm import complete
 
 async def handle_greeting(payload: Greeting, metadata: HandlerMetadata):
     response = await complete(

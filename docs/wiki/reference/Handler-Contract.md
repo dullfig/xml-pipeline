@@ -146,7 +146,7 @@ The system enforces these rules on responses:
 
 ## Peer Constraints
 
-Agents can only send to declared peers:
+Agents can only send to their **effective peers**. By default, these come from the static `peers` list at registration:
 
 ```yaml
 listeners:
@@ -155,9 +155,17 @@ listeners:
     peers: [shouter, logger]  # Only these allowed
 ```
 
+### Peer Table Override
+
+When a thread is created with a named **peer table** (e.g., `"premium"`), the table's peer definitions override the static `peers` list for that thread. Tables are mutable — mid-conversation privilege changes take effect immediately.
+
+Agents in tabled threads automatically receive table-specific `usage_instructions` reflecting their actual permissions.
+
+See [[Writing Handlers]] for peer table details.
+
 ### Violation Handling
 
-If agent sends to undeclared peer:
+If agent sends to a peer not in their effective peer list:
 
 1. Message **blocked** (never routed)
 2. `SystemError` returned to agent
@@ -218,7 +226,7 @@ async def add_handler(payload: AddPayload, metadata: HandlerMetadata) -> Handler
 
 ```python
 async def research_handler(payload: ResearchQuery, metadata: HandlerMetadata) -> HandlerResponse:
-    from xml_pipeline.platform.llm_api import complete
+    from xml_pipeline.llm import complete
 
     response = await complete(
         model="grok-4.1",

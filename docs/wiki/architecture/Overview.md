@@ -10,7 +10,8 @@ xml-pipeline implements a stream-based message pump where all communication flow
 │  • Thread registry (UUID ↔ call chain mapping)                      │
 │  • Listener registry (name → peers, schema)                         │
 │  • Envelope injection (<from>, <thread>, <to>)                      │
-│  • Peer constraint enforcement                                      │
+│  • Peer constraint enforcement (static peers + peer tables)         │
+│  • OOB privileged channel (hot-reload, introspection)               │
 └─────────────────────────────────────────────────────────────────────┘
                                ↕
                     Coroutine Capture Boundary
@@ -111,6 +112,18 @@ name: "greeter"
   └── schema: schemas/greeter/v1.xsd
 ```
 
+### OOB Privileged Channel
+
+A separate localhost-only WebSocket server for trusted administration:
+
+- Hot-reload (register/unregister listeners at runtime)
+- Introspection (list listeners, get schemas, get status)
+- Message injection and thread subscription
+- Peer table management (register, modify)
+- Ed25519 signature verification (skipped in dev mode)
+
+Runs on a dedicated port (default 8766), separate from the main message bus. The main pump is completely oblivious to privileged operations.
+
 ### Context Buffer
 
 Stores message history per thread:
@@ -208,14 +221,21 @@ System:
 | Response/no response | Return value |
 | Self-iteration | Call own name |
 
+### Peer Tables
+
+For thread-scoped privilege enforcement, **peer tables** override static `listener.peers` on a per-thread basis. When a thread is created with a named routing table (e.g., `"premium"`), dispatch uses the table's peer definitions instead. Tables are mutable — changes take effect immediately on all threads using that table.
+
+See [[Writing Handlers]] for usage details.
+
 ### What Handlers Cannot Do
 
 - Forge sender identity
 - Access other threads
 - Discover topology
-- Route to undeclared peers
+- Route to undeclared peers (static or table-enforced)
 - Modify message history
 - Access other handlers' state
+- See which peer table governs their thread
 
 ## Multiprocess Architecture
 
@@ -254,3 +274,4 @@ See [[Shared Backend]] for details.
 - [[Thread Registry]] — Call chain tracking
 - [[Shared Backend]] — Cross-process state
 - [[Handler Contract]] — Handler specification
+- [[Writing Handlers]] — Peer tables and security

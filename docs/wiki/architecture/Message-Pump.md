@@ -7,13 +7,15 @@ The Message Pump (StreamPump) is the heart of xml-pipeline. It orchestrates mess
 The pump uses [aiostream](https://aiostream.readthedocs.io/) for stream-based processing with concurrent fan-out capabilities.
 
 ```python
-from xml_pipeline.message_bus.stream_pump import StreamPump
+from xml_pipeline import StreamPump
 
-pump = StreamPump(config)
+pump = StreamPump(name="my-organism")
+pump.register("greeter", handle_greeting, Greeting,
+              description="Greeting agent", peers=["shouter"])
 await pump.start()
 
 # Inject a message
-await pump.inject(raw_bytes, from_id="console")
+await pump.inject("greeter", Greeting(name="Alice"))
 
 await pump.shutdown()
 ```
@@ -267,9 +269,16 @@ async def _process_response(response, listener, state):
     if response is None:
         return  # Chain terminates
 
+    # Resolve effective peers (peer table override or static listener.peers)
+    table_name = registry.get_table_for_thread(state.thread_id)
+    if table_name and table_name in self._peer_tables:
+        effective_peers = self._peer_tables[table_name].get(listener.name, listener.peers)
+    else:
+        effective_peers = listener.peers
+
     # Validate target
-    if listener.is_agent and listener.peers:
-        if response.to not in listener.peers:
+    if listener.is_agent and effective_peers:
+        if response.to not in effective_peers:
             await self._emit_error(state, "Routing error")
             return
 
@@ -315,12 +324,16 @@ If an agent tries to route to an undeclared peer:
 ## Lifecycle
 
 ```python
+from xml_pipeline import StreamPump
+
 # Start
-pump = StreamPump(config)
+pump = StreamPump(name="my-organism")
+pump.register("greeter", handle_greeting, Greeting,
+              description="Greeting agent")
 await pump.start()
 
 # Inject messages
-await pump.inject(raw_bytes, from_id="console")
+await pump.inject("greeter", Greeting(name="Alice"))
 
 # Shutdown (graceful)
 await pump.shutdown()

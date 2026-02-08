@@ -31,7 +31,7 @@ The LLM Router provides a unified interface for language model calls. Agents req
 ### Basic Usage
 
 ```python
-from xml_pipeline.platform.llm_api import complete
+from xml_pipeline.llm import complete
 
 response = await complete(
     model="grok-4.1",
@@ -48,7 +48,7 @@ print(response.content)
 
 ```python
 async def my_agent(payload: Query, metadata: HandlerMetadata) -> HandlerResponse:
-    from xml_pipeline.platform.llm_api import complete
+    from xml_pipeline.llm import complete
 
     response = await complete(
         model="grok-4.1",

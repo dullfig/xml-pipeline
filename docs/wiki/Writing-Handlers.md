@@ -185,7 +185,7 @@ An agent that uses language models:
 
 ```python
 async def research_handler(payload: ResearchQuery, metadata: HandlerMetadata) -> HandlerResponse:
-    from xml_pipeline.platform.llm_api import complete
+    from xml_pipeline.llm import complete
 
     # Build prompt with peer awareness
     system_prompt = f"""
@@ -287,13 +287,24 @@ listeners:
 
 These run in a separate process pool to avoid blocking the event loop.
 
+## Peer Tables
+
+By default, agents can only call peers declared in their `peers` list at registration time. **Peer tables** allow overriding this per-thread, enabling different privilege tiers (e.g., premium vs basic users).
+
+When a thread is created with `routing_table="premium"`, the pump uses the table's peer definitions instead of the static `listener.peers`. Tables are mutable — changes take effect immediately on all threads using that table.
+
+Agents in tabled threads automatically receive table-specific `usage_instructions` reflecting their actual permissions.
+
+See [Peer Tables](../api.md#peer-tables) in the API reference for details.
+
 ## Security Notes
 
 Handlers are **untrusted code**. The system enforces:
 
 1. **Identity injection** — `<from>` is always set by the pump, never by handlers
 2. **Thread isolation** — Handlers see only opaque UUIDs
-3. **Peer constraints** — Agents can only send to declared peers
+3. **Peer constraints** — Agents can only send to effective peers (peer table override or static `listener.peers`)
+4. **Peer tables** — Table name embedded in thread chain (behind opaque UUID), invisible to agents
 
 Even compromised handlers cannot:
 - Forge sender identity

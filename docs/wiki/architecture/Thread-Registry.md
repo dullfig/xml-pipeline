@@ -167,6 +167,48 @@ registry.register_thread(
 3. Context buffer for thread deleted
 ```
 
+## Peer Table Roots
+
+The thread registry also manages **peer table roots** — named routing tables for thread-scoped privilege enforcement. When a thread is created with a routing table, the chain prefix carries the table name instead of `system`.
+
+### API
+
+```python
+# Create a root chain for a peer table
+root_uuid = registry.initialize_table_root("premium", "my-organism")
+# Creates: premium.my-organism → uuid
+
+# Get root UUID for a named table
+root_uuid = registry.get_table_root("premium")
+# Returns: uuid or None
+
+# Extract table name from a thread's chain
+table_name = registry.get_table_for_thread(thread_uuid)
+# Returns: "premium" (or None for "system.*" chains)
+```
+
+### How It Works
+
+Default threads have chains like `system.organism.console.greeter`. Tabled threads replace the `system` prefix with the table name:
+
+```
+Default thread:  system.organism.external.concierge
+                 │
+                 └─ Uses listener.peers (static)
+
+Tabled thread:   premium.organism.external.concierge
+                 │
+                 └─ Uses _peer_tables["premium"] (dynamic)
+```
+
+The `get_table_for_thread()` method looks up the chain, splits by `.`, and returns the first segment if it's not `"system"`. This is O(1) and called on every dispatch.
+
+### Instance Data
+
+```python
+_table_roots: Dict[str, str]  # table_name → root_uuid
+```
+
 ## Shared Backend Support
 
 For multiprocess deployments, the registry can use a shared backend:
