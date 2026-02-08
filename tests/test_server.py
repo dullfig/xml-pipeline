@@ -23,6 +23,7 @@ from xml_pipeline.server.models import (
     MessageInfo,
     OrganismInfo,
     OrganismStatus,
+    SubscribeRequest,
 )
 from xml_pipeline.server.state import ServerState, AgentRuntimeState, ThreadRuntimeState
 from xml_pipeline.server.api import create_router
@@ -891,3 +892,319 @@ class TestUsageAPI:
 
         # Cost should be approximately $18
         assert data["usage"]["totals"]["totalCost"] == 18.0
+
+
+# ============================================================================
+# Test ConnectionManager (unit tests)
+# ============================================================================
+
+class TestConnectionManager:
+    """Test ConnectionManager subscription filtering logic."""
+
+    def test_should_send_no_filters(self):
+        """With no subscription filters, all events should be sent."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest()
+
+        assert mgr.should_send(ws, {"event": "message"}) is True
+        assert mgr.should_send(ws, {"event": "agent_state"}) is True
+
+    def test_should_send_event_type_filter(self):
+        """Filter by event type."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest(events=["message"])
+
+        assert mgr.should_send(ws, {"event": "message"}) is True
+        assert mgr.should_send(ws, {"event": "agent_state"}) is False
+
+    def test_should_send_thread_filter(self):
+        """Filter by thread ID."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest(threads=["thread-1"])
+
+        assert mgr.should_send(ws, {"event": "x", "thread_id": "thread-1"}) is True
+        assert mgr.should_send(ws, {"event": "x", "thread_id": "thread-2"}) is False
+
+    def test_should_send_agent_filter(self):
+        """Filter by agent name."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest(agents=["greeter"])
+
+        assert mgr.should_send(ws, {"event": "x", "agent": "greeter"}) is True
+        assert mgr.should_send(ws, {"event": "x", "agent": "shouter"}) is False
+
+    def test_should_send_message_from_to_filter(self):
+        """For message events, filter by from/to matching agents."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest(agents=["greeter"])
+
+        # from matches
+        assert mgr.should_send(ws, {
+            "event": "message",
+            "message": {"from": "greeter", "to": "shouter"},
+        }) is True
+
+        # to matches
+        assert mgr.should_send(ws, {
+            "event": "message",
+            "message": {"from": "shouter", "to": "greeter"},
+        }) is True
+
+        # neither matches
+        assert mgr.should_send(ws, {
+            "event": "message",
+            "message": {"from": "shouter", "to": "logger"},
+        }) is False
+
+    def test_should_send_payload_type_filter(self):
+        """Filter by payload type."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.subscriptions[ws] = SubscribeRequest(payload_types=["Greeting"])
+
+        assert mgr.should_send(ws, {
+            "event": "message",
+            "message": {"payloadType": "Greeting"},
+        }) is True
+
+        assert mgr.should_send(ws, {
+            "event": "message",
+            "message": {"payloadType": "ShoutResponse"},
+        }) is False
+
+    @pytest.mark.asyncio
+    async def test_broadcast_to_matching(self):
+        """Broadcast sends only to matching connections."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws1 = AsyncMock()
+        ws2 = AsyncMock()
+        mgr.active_connections = {ws1, ws2}
+        mgr.subscriptions[ws1] = SubscribeRequest(events=["message"])
+        mgr.subscriptions[ws2] = SubscribeRequest(events=["agent_state"])
+
+        await mgr.broadcast({"event": "message"})
+
+        ws1.send_json.assert_called_once()
+        ws2.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_cleans_disconnected(self):
+        """Broadcast cleans up connections that raise exceptions."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = AsyncMock()
+        ws.send_json.side_effect = Exception("disconnected")
+        mgr.active_connections = {ws}
+        mgr.subscriptions[ws] = SubscribeRequest()
+
+        await mgr.broadcast({"event": "test"})
+
+        assert ws not in mgr.active_connections
+        assert ws not in mgr.subscriptions
+
+    def test_disconnect(self):
+        """Disconnect removes connection from both sets."""
+        from xml_pipeline.server.websocket import ConnectionManager
+        mgr = ConnectionManager()
+
+        ws = MagicMock()
+        mgr.active_connections.add(ws)
+        mgr.subscriptions[ws] = SubscribeRequest()
+
+        mgr.disconnect(ws)
+
+        assert ws not in mgr.active_connections
+        assert ws not in mgr.subscriptions
+
+
+# ============================================================================
+# Test MessageStreamManager (unit tests)
+# ============================================================================
+
+class TestMessageStreamManager:
+    """Test MessageStreamManager filtering logic."""
+
+    def test_should_send_no_filter(self):
+        """With no filter, all messages should be sent."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = MagicMock()
+        mgr.filters[ws] = {}
+
+        assert mgr.should_send(ws, {"from": "greeter"}) is True
+
+    def test_filter_by_agents(self):
+        """Filter messages by agent from/to."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = MagicMock()
+        mgr.filters[ws] = {"agents": ["greeter"]}
+
+        assert mgr.should_send(ws, {"from": "greeter", "to": "shouter"}) is True
+        assert mgr.should_send(ws, {"from": "shouter", "to": "greeter"}) is True
+        assert mgr.should_send(ws, {"from": "shouter", "to": "logger"}) is False
+
+    def test_filter_by_threads(self):
+        """Filter messages by thread ID."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = MagicMock()
+        mgr.filters[ws] = {"threads": ["t1"]}
+
+        assert mgr.should_send(ws, {"thread_id": "t1"}) is True
+        assert mgr.should_send(ws, {"thread_id": "t2"}) is False
+
+    def test_filter_by_payload_types(self):
+        """Filter messages by payload type."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = MagicMock()
+        mgr.filters[ws] = {"payload_types": ["Greeting"]}
+
+        assert mgr.should_send(ws, {"payloadType": "Greeting"}) is True
+        assert mgr.should_send(ws, {"payloadType": "Other"}) is False
+
+    @pytest.mark.asyncio
+    async def test_broadcast_message(self):
+        """Broadcast sends to matching connections."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws1 = AsyncMock()
+        ws2 = AsyncMock()
+        mgr.active_connections = {ws1, ws2}
+        mgr.filters[ws1] = {"agents": ["greeter"]}
+        mgr.filters[ws2] = {"agents": ["logger"]}
+
+        await mgr.broadcast_message({"from": "greeter", "to": "shouter"})
+
+        ws1.send_json.assert_called_once()
+        ws2.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_broadcast_cleans_disconnected(self):
+        """Broadcast cleans up failed connections."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = AsyncMock()
+        ws.send_json.side_effect = Exception("disconnected")
+        mgr.active_connections = {ws}
+        mgr.filters[ws] = {}
+
+        await mgr.broadcast_message({"from": "greeter"})
+
+        assert ws not in mgr.active_connections
+
+    def test_disconnect(self):
+        """Disconnect removes connection from both sets."""
+        from xml_pipeline.server.websocket import MessageStreamManager
+        mgr = MessageStreamManager()
+
+        ws = MagicMock()
+        mgr.active_connections.add(ws)
+        mgr.filters[ws] = {}
+
+        mgr.disconnect(ws)
+
+        assert ws not in mgr.active_connections
+        assert ws not in mgr.filters
+
+
+# ============================================================================
+# Test WebSocket Integration (via TestClient)
+# ============================================================================
+
+class TestWebSocketIntegration:
+    """Integration tests for WebSocket endpoints via TestClient."""
+
+    def test_ws_connect_receives_snapshot(self, test_client):
+        """WebSocket /ws sends connected event with state snapshot."""
+        with test_client.websocket_connect("/ws") as websocket:
+            data = websocket.receive_json()
+            assert data["event"] == "connected"
+            assert "organism" in data
+            assert "agents" in data
+            assert isinstance(data["agents"], list)
+            assert "threads" in data
+
+    def test_ws_subscribe_updates_filters(self, test_client):
+        """Subscribe command updates connection filters."""
+        with test_client.websocket_connect("/ws") as websocket:
+            websocket.receive_json()  # consume connected event
+
+            websocket.send_json({
+                "cmd": "subscribe",
+                "agents": ["greeter"],
+                "events": ["message", "agent_state"],
+            })
+
+            data = websocket.receive_json()
+            assert data["event"] == "subscribed"
+            assert "filters" in data
+
+    def test_ws_inject_missing_to(self, test_client):
+        """Inject without 'to' returns error."""
+        with test_client.websocket_connect("/ws") as websocket:
+            websocket.receive_json()
+
+            websocket.send_json({"cmd": "inject", "payload": {}})
+
+            data = websocket.receive_json()
+            assert data["event"] == "error"
+            assert "to" in data["error"].lower()
+
+    def test_ws_unknown_command_error(self, test_client):
+        """Unknown command returns error."""
+        with test_client.websocket_connect("/ws") as websocket:
+            websocket.receive_json()
+
+            websocket.send_json({"cmd": "do_something"})
+
+            data = websocket.receive_json()
+            assert data["event"] == "error"
+            assert "do_something" in data["error"]
+
+    def test_ws_messages_subscribe(self, test_client):
+        """WebSocket /ws/messages subscribe command works."""
+        with test_client.websocket_connect("/ws/messages") as websocket:
+            websocket.send_json({
+                "cmd": "subscribe",
+                "filter": {"agents": ["greeter"], "threads": ["t1"]},
+            })
+
+            data = websocket.receive_json()
+            assert data["event"] == "subscribed"
+            assert data["filter"]["agents"] == ["greeter"]
+
+    def test_ws_messages_unknown_command(self, test_client):
+        """Unknown command on /ws/messages returns error."""
+        with test_client.websocket_connect("/ws/messages") as websocket:
+            websocket.send_json({"cmd": "bad"})
+
+            data = websocket.receive_json()
+            assert data["event"] == "error"

@@ -7,11 +7,12 @@ Requires exist-db to be running and configured.
 
 from __future__ import annotations
 
-from typing import Optional, Dict
+import posixpath
+import re
 from dataclasses import dataclass
+from typing import Dict, Optional
 
-from .base import tool, ToolResult
-
+from .base import ToolResult, tool
 
 try:
     import aiohttp
@@ -50,9 +51,27 @@ def _check_config() -> Optional[str]:
 
 
 def _resolve_path(path: str) -> str:
+    """Resolve path, preventing traversal outside default_collection."""
+    # Reject any path containing '..' segments (before or after normalization)
+    if ".." in path.split("/"):
+        raise ValueError(f"Path traversal blocked: {path}")
     if path.startswith("/"):
-        return path
-    return f"{_config.default_collection}/{path}"
+        return posixpath.normpath(path)
+    # Relative path — prepend default collection
+    combined = f"{_config.default_collection}/{path}"
+    normalized = posixpath.normpath(combined)
+    # Ensure result stays under default_collection
+    if not normalized.startswith(_config.default_collection):
+        raise ValueError(f"Path traversal blocked: {path}")
+    return normalized
+
+
+def _escape_xquery_string(value: str) -> str:
+    """Escape a string for safe embedding in XQuery double-quoted literals.
+
+    XQuery double-quoted strings use "" to represent a literal double-quote.
+    """
+    return value.replace('"', '""')
 
 
 @tool
@@ -60,7 +79,10 @@ async def librarian_store(collection: str, document_name: str, content: str) -> 
     """Store an XML document in exist-db."""
     if error := _check_config():
         return ToolResult(success=False, error=error)
-    collection = _resolve_path(collection)
+    try:
+        collection = _resolve_path(collection)
+    except ValueError as e:
+        return ToolResult(success=False, error=str(e))
     url = f"{_config.url}{collection}/{document_name}"
     try:
         auth = aiohttp.BasicAuth(_config.username, _config.password)
@@ -79,7 +101,10 @@ async def librarian_get(path: str) -> ToolResult:
     """Retrieve a document by path."""
     if error := _check_config():
         return ToolResult(success=False, error=error)
-    path = _resolve_path(path)
+    try:
+        path = _resolve_path(path)
+    except ValueError as e:
+        return ToolResult(success=False, error=str(e))
     url = f"{_config.url}{path}"
     try:
         auth = aiohttp.BasicAuth(_config.username, _config.password)
@@ -99,11 +124,17 @@ async def librarian_query(query: str, collection: Optional[str] = None, variable
     """Execute an XQuery against exist-db."""
     if error := _check_config():
         return ToolResult(success=False, error=error)
-    base_path = _resolve_path(collection) if collection else "/db"
+    try:
+        base_path = _resolve_path(collection) if collection else "/db"
+    except ValueError as e:
+        return ToolResult(success=False, error=str(e))
     url = f"{_config.url}{base_path}"
     full_query = query
     if variables:
-        var_decls = "\n".join(f'declare variable ${k} external := "{v}";' for k, v in variables.items())
+        var_decls = "\n".join(
+            f'declare variable ${k} external := "{_escape_xquery_string(v)}";'
+            for k, v in variables.items()
+        )
         full_query = f"{var_decls}\n{query}"
     try:
         auth = aiohttp.BasicAuth(_config.username, _config.password)
@@ -121,8 +152,18 @@ async def librarian_search(query: str, collection: Optional[str] = None, num_res
     """Full-text search across documents using Lucene."""
     if error := _check_config():
         return ToolResult(success=False, error=error)
-    base_path = _resolve_path(collection) if collection else _config.default_collection
-    xquery = f'import module namespace ft="http://exist-db.org/xquery/lucene"; for $hit in collection("{base_path}")//*[ft:query(., "{query}")] let $score := ft:score($hit) order by $score descending return <result><path>{{document-uri(root($hit))}}</path><score>{{$score}}</score></result>'
+    try:
+        base_path = _resolve_path(collection) if collection else _config.default_collection
+    except ValueError as e:
+        return ToolResult(success=False, error=str(e))
+    escaped_query = _escape_xquery_string(query)
+    xquery = (
+        f'import module namespace ft="http://exist-db.org/xquery/lucene"; '
+        f'for $hit in collection("{base_path}")//*[ft:query(., "{escaped_query}")] '
+        f'let $score := ft:score($hit) order by $score descending '
+        f'return <result><path>{{document-uri(root($hit))}}</path>'
+        f'<score>{{$score}}</score></result>'
+    )
     url = f"{_config.url}{base_path}"
     try:
         auth = aiohttp.BasicAuth(_config.username, _config.password)

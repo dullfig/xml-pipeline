@@ -13,6 +13,18 @@ from typing import Any
 
 from .base import tool, ToolResult
 
+# Maximum input size (1 MB) to prevent denial-of-service
+MAX_INPUT_SIZE = 1_000_000
+
+# Valid XML tag name: starts with letter or underscore, then word chars, dots, hyphens
+_VALID_TAG_RE = re.compile(r"^[a-zA-Z_][\w.\-]*$")
+
+
+def _validate_tag_name(name: str) -> None:
+    """Raise ValueError if name is not a valid XML tag."""
+    if not _VALID_TAG_RE.match(name):
+        raise ValueError(f"Invalid XML tag name: {name!r}")
+
 
 def _xml_to_dict(element: ET.Element) -> dict | str | list:
     """Recursively convert XML element to dict."""
@@ -57,16 +69,19 @@ def _xml_to_dict(element: ET.Element) -> dict | str | list:
 
 def _dict_to_xml(data: Any, tag: str = "item", parent: ET.Element | None = None) -> ET.Element:
     """Recursively convert dict to XML element."""
+    _validate_tag_name(tag)
     if parent is None:
         elem = ET.Element(tag)
     else:
         elem = ET.SubElement(parent, tag)
-    
+
     if isinstance(data, dict):
         for key, value in data.items():
             if key.startswith("@"):
-                # Attribute
-                elem.set(key[1:], str(value))
+                # Attribute — validate the attribute name (without @)
+                attr_name = key[1:]
+                _validate_tag_name(attr_name)
+                elem.set(attr_name, str(value))
             elif isinstance(value, list):
                 # Multiple children
                 for item in value:
@@ -76,6 +91,7 @@ def _dict_to_xml(data: Any, tag: str = "item", parent: ET.Element | None = None)
                 _dict_to_xml(value, key, elem)
             else:
                 # Simple value as child element
+                _validate_tag_name(key)
                 child = ET.SubElement(elem, key)
                 if value is not None:
                     child.text = str(value)
@@ -111,19 +127,16 @@ async def xml_to_json(
         <user><name>Alice</name><age>30</age></user>
         → {"name": "Alice", "age": 30}
     """
+    if len(xml_string) > MAX_INPUT_SIZE:
+        return ToolResult(success=False, error=f"Input exceeds {MAX_INPUT_SIZE} byte limit")
     try:
         # Parse XML
         root = ET.fromstring(xml_string.strip())
         data = _xml_to_dict(root)
-        
-        # Optionally strip the root element wrapper
-        if strip_root and isinstance(data, dict) and len(data) == 1:
-            # Check if we should unwrap
-            pass  # Keep as-is, root is already stripped by _xml_to_dict
-        
+
         # Wrap with root tag name if it's meaningful
         result = {root.tag: data} if not strip_root else data
-        
+
         return ToolResult(success=True, data={
             "json": json.dumps(result, indent=2),
             "data": result,
@@ -157,6 +170,8 @@ async def json_to_xml(
         {"name": "Alice", "age": 30}
         → <data><name>Alice</name><age>30</age></data>
     """
+    if len(json_string) > MAX_INPUT_SIZE:
+        return ToolResult(success=False, error=f"Input exceeds {MAX_INPUT_SIZE} byte limit")
     try:
         data = json.loads(json_string)
         root = _dict_to_xml(data, root_tag)
@@ -191,6 +206,8 @@ async def xml_extract(
         matches: List of matching elements as dicts
         count: Number of matches
     """
+    if len(xml_string) > MAX_INPUT_SIZE:
+        return ToolResult(success=False, error=f"Input exceeds {MAX_INPUT_SIZE} byte limit")
     try:
         root = ET.fromstring(xml_string.strip())
         elements = root.findall(xpath)

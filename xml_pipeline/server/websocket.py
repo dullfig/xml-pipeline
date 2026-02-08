@@ -230,6 +230,11 @@ def create_websocket_router(state: "ServerState") -> APIRouter:
 
                 elif cmd == "inject":
                     # Inject a message (same as REST /inject)
+                    # TODO: Actual pump injection requires resolving the
+                    # payload class from the JSON target name, which needs
+                    # listener registry lookup + dynamic @xmlify instantiation.
+                    # Currently records the message in state (useful for UI)
+                    # but does not call pump.inject().
                     target = data.get("to")
                     payload = data.get("payload", {})
                     thread_id = data.get("thread_id")

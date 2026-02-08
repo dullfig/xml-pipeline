@@ -75,10 +75,10 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 | fetch | `fetch.py` | IMPL | 0 | **High** — SSRF protection, private IP blocking, URL validation |
 | files | `files.py` | IMPL | 0 | **High** — path traversal protection, sandbox allowlist, 10MB limit |
 | shell | `shell.py` | IMPL | 0 | **High** — dangerous command blocklist, shell operator filtering |
-| search | `search.py` | IMPL | 0 | **Medium** — 3 backends (SerpAPI, Google, Bing), external API calls |
-| convert | `convert.py` | IMPL | 0 | **Medium** — XML/JSON parsing, XPath queries, has dead code |
-| librarian | `librarian.py` | IMPL | 0 | **Medium** — exist-db REST client, XQuery variable binding via string concat |
-| keyvalue | `keyvalue.py` | STUB | 0 | **Low** — in-memory dict; TTL ignored; needs Redis/SQLite backend |
+| search | `search.py` | READY | 18 | Medium — 3 backends (SerpAPI, Google, Bing), all mocked |
+| convert | `convert.py` | READY | 43 | Medium — input size limit (1MB), tag name validation added |
+| librarian | `librarian.py` | READY | 31 | Medium — XQuery/Lucene injection fixed, path traversal blocked |
+| keyvalue | `keyvalue.py` | READY | 39 | Low — SQLite backend via aiosqlite, TTL, in-memory fallback |
 
 ---
 
@@ -99,7 +99,7 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 | CLI: `run`, `serve`, `init`, `check`, `version`, `keygen` | READY | — | All functional |
 | Background workers (`WorkerRegistry`) | READY | 29 | multiprocessing, thread-scoped |
 | Config loading (monolithic + split) | READY | yes | — |
-| WebSocket event streaming | STUB | 0 | Skeleton endpoint; no push implementation |
+| WebSocket event streaming | READY | 22 | ConnectionManager + MessageStreamManager tested; inject pump wiring is TODO |
 
 ---
 
@@ -131,10 +131,10 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 7. ~~Fix docs: federation not implemented~~ — annotated in core-principles, configuration.md
 - Also fixed: introspection (meta) rewritten as operator-only; todo_nudge marked not yet implemented; fair-share queuing annotated; "locked for v2.1" softened
 
-### P2 — Completeness (implement stubs)
-8. Implement `keyvalue.py` backend (Redis or SQLite)
-9. Tests for `search.py`, `convert.py`, `librarian.py`
-10. WebSocket event streaming
+### P2 — Completeness (implement stubs) — DONE
+8. ~~Implement `keyvalue.py` backend~~ — SQLite via aiosqlite, TTL support, in-memory fallback (39 tests)
+9. ~~Tests for `search.py`, `convert.py`, `librarian.py`~~ — 18 + 43 + 31 tests; security fixes: input size limit + tag validation (convert), XQuery/Lucene injection + path traversal (librarian)
+10. ~~WebSocket event streaming~~ — ConnectionManager/MessageStreamManager tested (22 tests); inject pump wiring marked TODO (requires payload class resolution)
 
 ### P3 — Future (documented aspirations)
 11. TLS enforcement on main bus
