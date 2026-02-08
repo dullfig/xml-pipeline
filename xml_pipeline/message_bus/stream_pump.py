@@ -158,6 +158,11 @@ class OrganismConfig:
     backend_redis_url: str = "redis://localhost:6379"
     backend_redis_prefix: str = "xp:"
 
+    # OOB privileged channel
+    oob_enabled: bool = True
+    oob_bind: str = "127.0.0.1"
+    oob_port: int = 8766
+
 
 @dataclass
 class Listener:
@@ -279,6 +284,9 @@ class StreamPump:
         max_concurrent_per_agent: int = 5,
         llm_config: Dict[str, Any] | None = None,
         identity_path: str = "",
+        oob_enabled: bool = False,
+        oob_bind: str = "127.0.0.1",
+        oob_port: int = 8766,
     ):
         # Build config from kwargs if not provided directly
         if config is None:
@@ -290,6 +298,9 @@ class StreamPump:
                 max_concurrent_per_agent=max_concurrent_per_agent,
                 max_tokens_per_thread=max_tokens_per_thread,
                 llm_config=llm_config or {},
+                oob_enabled=oob_enabled,
+                oob_bind=oob_bind,
+                oob_port=oob_port,
             )
 
         self.config = config
@@ -335,6 +346,16 @@ class StreamPump:
             pump_logger.info(
                 f"ProcessPool initialized: {config.process_pool_workers} workers"
             )
+
+        # OOB server (started in start(), stopped in shutdown())
+        self._oob_server: Any = None
+        self._start_time: float = 0.0
+
+        # Peer tables: named routing tables for thread-scoped privilege enforcement
+        # { table_name: { listener_name: [allowed_peers] } }
+        self._peer_tables: Dict[str, Dict[str, List[str]]] = {}
+        # { table_name: { listener_name: usage_instructions_str } }
+        self._table_usage_instructions: Dict[str, Dict[str, str]] = {}
 
         # Shared backend for cross-process state
         self._shared_backend = None
@@ -538,13 +559,20 @@ class StreamPump:
             if listener.is_agent and listener.peers:
                 listener.usage_instructions = self._build_usage_instructions(listener)
 
-    def _build_usage_instructions(self, agent: Listener) -> str:
+    def _build_usage_instructions(
+        self, agent: Listener, peers_override: List[str] | None = None
+    ) -> str:
         """
         Build LLM system prompt instructions from peer schemas.
 
         Generates human-readable documentation of what messages
         this agent can send to its peers.
+
+        Args:
+            agent: The agent listener
+            peers_override: If provided, use this peers list instead of agent.peers
         """
+        peers = peers_override if peers_override is not None else agent.peers
         lines = [
             f"You are the {agent.name} agent.",
             f"Description: {agent.description}",
@@ -552,7 +580,7 @@ class StreamPump:
             "You can send messages to the following peers:",
         ]
 
-        for peer_name in agent.peers:
+        for peer_name in peers:
             peer = self.listeners.get(peer_name)
             if not peer:
                 lines.append(f"\n## {peer_name} (not registered)")
@@ -589,6 +617,95 @@ class StreamPump:
         lines.append("If you need results from a peer, wait for their response before you respond.")
 
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Peer Tables
+    # ------------------------------------------------------------------
+
+    def register_peer_table(self, name: str, peers: Dict[str, List[str]]) -> None:
+        """
+        Register a named peer table (privilege tier).
+
+        Peer tables override ``Listener.peers`` for threads that use this table.
+        All dispatch enforcement for those threads uses the table's peer
+        definitions instead of the listener's static peers list.
+
+        Args:
+            name: Table name (e.g., "premium", "basic")
+            peers: Mapping of listener_name -> [allowed_peers]
+        """
+        self._peer_tables[name] = dict(peers)
+
+        # Initialize table root in thread registry
+        registry = get_registry()
+        registry.initialize_table_root(name, self.config.name)
+
+        # Pre-build usage_instructions for agents in this table
+        table_instructions: Dict[str, str] = {}
+        for listener_name, peer_list in peers.items():
+            listener = self.listeners.get(listener_name)
+            if listener and listener.is_agent:
+                table_instructions[listener_name] = self._build_usage_instructions(
+                    listener, peers_override=peer_list
+                )
+        self._table_usage_instructions[name] = table_instructions
+
+        pump_logger.info(f"Peer table '{name}' registered: {list(peers.keys())}")
+
+    def modify_peer_table(
+        self,
+        name: str,
+        listener_name: str,
+        *,
+        grant: List[str] | None = None,
+        revoke: List[str] | None = None,
+    ) -> List[str]:
+        """
+        Modify a single listener's peers within a table.
+
+        Args:
+            name: Table name
+            listener_name: Listener to modify
+            grant: Peer names to add
+            revoke: Peer names to remove
+
+        Returns:
+            The updated peers list for this listener in this table.
+
+        Raises:
+            KeyError: If table does not exist.
+        """
+        if name not in self._peer_tables:
+            raise KeyError(f"Peer table '{name}' not registered")
+
+        current = list(self._peer_tables[name].get(listener_name, []))
+
+        if grant:
+            for peer in grant:
+                if peer not in current:
+                    current.append(peer)
+        if revoke:
+            current = [p for p in current if p not in revoke]
+
+        self._peer_tables[name][listener_name] = current
+
+        # Rebuild usage_instructions for this listener in this table
+        listener = self.listeners.get(listener_name)
+        if listener and listener.is_agent:
+            self._table_usage_instructions.setdefault(name, {})[listener_name] = (
+                self._build_usage_instructions(listener, peers_override=current)
+            )
+
+        # Emit reload event
+        self._emit_event(ReloadEvent(
+            success=True,
+            updated_listeners=[f"{name}:{listener_name}"],
+        ))
+
+        pump_logger.info(
+            f"Peer table '{name}' modified: {listener_name} -> {current}"
+        )
+        return current
 
     def _generate_schema(self, payload_class: type) -> etree.XMLSchema:
         """Generate XSD schema from xmlified payload class."""
@@ -702,6 +819,23 @@ class StreamPump:
         # Set global singleton
         set_stream_pump(self)
 
+        # --- 8. OOB privileged channel ---
+        import time as _time
+        self._start_time = _time.time()
+        if self.config.oob_enabled:
+            try:
+                from xml_pipeline.oob import OOBServer
+                self._oob_server = OOBServer(
+                    pump=self,
+                    bind=self.config.oob_bind,
+                    port=self.config.oob_port,
+                    identity=self.identity,
+                )
+                await self._oob_server.start()
+            except Exception as e:
+                pump_logger.warning(f"OOB server failed to start: {e}")
+                self._oob_server = None
+
         pump_logger.info(
             f"Organism '{self.config.name}' started: "
             f"{len(self.listeners)} listeners, root={root_uuid}"
@@ -806,6 +940,16 @@ class StreamPump:
                         raised = todo_registry.get_raised_for(current_thread, listener.name)
                         todo_nudge = todo_registry.format_nudge(raised)
 
+                    # === PEER TABLE: Resolve effective usage_instructions ===
+                    # If the thread belongs to a peer table, use table-specific
+                    # instructions instead of the listener's static ones.
+                    table_name = registry.get_table_for_thread(current_thread) if current_thread else None
+                    if (table_name and table_name in self._table_usage_instructions
+                            and listener.name in self._table_usage_instructions[table_name]):
+                        effective_usage_instructions = self._table_usage_instructions[table_name][listener.name]
+                    else:
+                        effective_usage_instructions = listener.usage_instructions
+
                     # === CONTEXT BUFFER: Record incoming message ===
                     # Append validated payload to thread's context buffer
                     # The returned BufferSlot becomes the single source of truth
@@ -819,7 +963,7 @@ class StreamPump:
                                 to_id=listener.name,
                                 own_name=listener.name if listener.is_agent else None,
                                 is_self_call=is_self_call,
-                                usage_instructions=listener.usage_instructions,
+                                usage_instructions=effective_usage_instructions,
                                 todo_nudge=todo_nudge,
                             )
                         except MemoryError:
@@ -841,7 +985,7 @@ class StreamPump:
                             from_id=state.from_id or "",
                             own_name=listener.name if listener.is_agent else None,
                             is_self_call=is_self_call,
-                            usage_instructions=listener.usage_instructions,
+                            usage_instructions=effective_usage_instructions,
                             todo_nudge=todo_nudge,
                         )
                         payload_ref = state.payload
@@ -908,14 +1052,21 @@ class StreamPump:
                             # Forward to named target - validate against peers
                             requested_to = response.to
 
+                            # Resolve effective peers: table overrides listener.peers
+                            if (table_name and table_name in self._peer_tables
+                                    and listener.name in self._peer_tables[table_name]):
+                                effective_peers = self._peer_tables[table_name][listener.name]
+                            else:
+                                effective_peers = listener.peers
+
                             # Enforce peer constraints for agents
-                            if listener.is_agent and listener.peers:
-                                if requested_to not in listener.peers:
+                            if listener.is_agent and effective_peers:
+                                if requested_to not in effective_peers:
                                     # Agent trying to send to non-peer - send generic error back to agent
                                     # Log details internally but don't reveal to agent
                                     import logging
                                     logging.getLogger(__name__).warning(
-                                        f"Peer violation: {listener.name} -> {requested_to} (allowed: {listener.peers})"
+                                        f"Peer violation: {listener.name} -> {requested_to} (allowed: {effective_peers})"
                                     )
 
                                     # Send SystemError back to the agent (keeps thread alive)
@@ -1315,6 +1466,7 @@ class StreamPump:
         *,
         from_id: str = "external",
         thread_id: str | None = None,
+        routing_table: str | None = None,
     ) -> str:
         """
         Inject a message into the pump (public API).
@@ -1326,6 +1478,11 @@ class StreamPump:
             payload: @xmlify dataclass instance (required when target is str).
             from_id: Sender identity (default "external").
             thread_id: Thread UUID. Created automatically if not provided.
+            routing_table: Named peer table for thread-scoped privilege
+                enforcement. When specified, the thread chain starts with
+                the table name prefix instead of ``system``, and all
+                dispatch enforcement for this thread (and sub-threads) uses
+                the table's peer definitions.
 
         Returns:
             The thread_id used for the message.
@@ -1337,6 +1494,10 @@ class StreamPump:
             # With explicit thread
             await pump.inject("greeter", Greeting(name="Alice"),
                               thread_id=my_thread)
+
+            # With peer table (privilege tier)
+            await pump.inject("concierge", Greeting(name="Alice"),
+                              routing_table="premium")
 
             # Legacy: raw bytes (backward compat, deprecated)
             await pump.inject(envelope_bytes, thread_id="...", from_id="system")
@@ -1363,10 +1524,21 @@ class StreamPump:
 
         if thread_id is None:
             registry = get_registry()
-            thread_id = registry.extend_chain(
-                registry.root_uuid or "",
-                target,
-            )
+            if routing_table and routing_table in self._peer_tables:
+                # Use table root instead of system root
+                table_root = registry.get_table_root(routing_table)
+                if table_root is None:
+                    # Auto-initialize table root if not yet done
+                    table_root = registry.initialize_table_root(
+                        routing_table, self.config.name
+                    )
+                thread_id = registry.extend_chain(table_root, from_id)
+                thread_id = registry.extend_chain(thread_id, target)
+            else:
+                thread_id = registry.extend_chain(
+                    registry.root_uuid or "",
+                    target,
+                )
 
         envelope_bytes = self._wrap_in_envelope(
             payload=payload,
@@ -1388,6 +1560,11 @@ class StreamPump:
 
     async def shutdown(self) -> None:
         """Graceful shutdown — wait for queue to drain and close resources."""
+        # Stop OOB server first
+        if self._oob_server:
+            await self._oob_server.stop()
+            self._oob_server = None
+
         self._running = False
         await self.queue.join()
 
@@ -1571,6 +1748,12 @@ class ConfigLoader:
         backend_redis_url = backend.get("redis_url", "redis://localhost:6379") if backend else "redis://localhost:6379"
         backend_redis_prefix = backend.get("redis_prefix", "xp:") if backend else "xp:"
 
+        # Parse OOB config
+        oob = raw.get("oob", {})
+        oob_enabled = oob.get("enabled", True) if oob else True
+        oob_bind = oob.get("bind", "127.0.0.1") if oob else "127.0.0.1"
+        oob_port = oob.get("port", 8766) if oob else 8766
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -1587,6 +1770,9 @@ class ConfigLoader:
             backend_type=backend_type,
             backend_redis_url=backend_redis_url,
             backend_redis_prefix=backend_redis_prefix,
+            oob_enabled=oob_enabled,
+            oob_bind=oob_bind,
+            oob_port=oob_port,
         )
 
         for entry in raw.get("listeners", []):

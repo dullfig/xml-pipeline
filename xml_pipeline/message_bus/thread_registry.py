@@ -68,6 +68,9 @@ class ThreadRegistry:
         self._root_uuid: Optional[str] = None
         self._root_chain: str = "system"
 
+        # Peer table roots: table_name -> root_uuid
+        self._table_roots: Dict[str, str] = {}
+
     @property
     def is_shared(self) -> bool:
         """Return True if using shared backend."""
@@ -372,6 +375,80 @@ class ThreadRegistry:
         self._backend.registry_set(chain, thread_id)
         return thread_id
 
+    # ------------------------------------------------------------------
+    # Peer Table Roots
+    # ------------------------------------------------------------------
+
+    def initialize_table_root(self, table_name: str, organism_name: str) -> str:
+        """
+        Create a root chain for a peer table: '{table_name}.{organism_name}'.
+
+        This mirrors initialize_root() but uses the table name as the chain
+        prefix instead of 'system'. All threads created under this root will
+        carry the table name in their chain, enabling per-thread privilege
+        enforcement.
+
+        Args:
+            table_name: Name of the peer table (e.g., "premium", "basic")
+            organism_name: Name of the organism
+
+        Returns:
+            UUID for the table root thread
+        """
+        with self._lock:
+            if table_name in self._table_roots:
+                return self._table_roots[table_name]
+
+            chain = f"{table_name}.{organism_name}"
+            root_uuid = str(uuid_module.uuid4())
+            self._chain_to_uuid[chain] = root_uuid
+            self._uuid_to_chain[root_uuid] = chain
+            self._table_roots[table_name] = root_uuid
+            return root_uuid
+
+    def get_table_root(self, table_name: str) -> Optional[str]:
+        """
+        Get root UUID for a named peer table.
+
+        Args:
+            table_name: Name of the peer table
+
+        Returns:
+            Root UUID, or None if table not initialized
+        """
+        return self._table_roots.get(table_name)
+
+    def get_table_for_thread(self, thread_id: str) -> Optional[str]:
+        """
+        Extract table name from chain prefix.
+
+        Returns None for 'system.*' chains (default threads).
+        For tabled threads like 'premium.organism.external.greeter',
+        returns 'premium'.
+
+        Args:
+            thread_id: Opaque thread UUID
+
+        Returns:
+            Table name, or None if this is a default (system) thread
+        """
+        if self._backend is not None:
+            chain = self._backend.registry_get_chain(thread_id)
+        else:
+            with self._lock:
+                chain = self._uuid_to_chain.get(thread_id)
+
+        if not chain:
+            return None
+
+        prefix = chain.split(".", 1)[0]
+        if prefix == "system":
+            return None
+        # Verify it's an actual registered table
+        if prefix in self._table_roots:
+            return prefix
+        return None
+
     def _cleanup_uuid(self, thread_id: str) -> None:
         """Remove a UUID mapping (internal, call with lock held)."""
         chain = self._uuid_to_chain.pop(thread_id, None)
@@ -401,6 +478,7 @@ class ThreadRegistry:
             self._backend.registry_clear()
             self._root_uuid = None
             self._root_chain = "system"
+            self._table_roots.clear()
             return
 
         with self._lock:
@@ -408,6 +486,7 @@ class ThreadRegistry:
             self._uuid_to_chain.clear()
             self._root_uuid = None
             self._root_chain = "system"
+            self._table_roots.clear()
 
 
 # Global registry instance

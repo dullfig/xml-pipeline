@@ -63,6 +63,10 @@
       <xs:element name="get-organism-graph" type="pm:GetOrganismGraph"/>
       <xs:element name="get-status" type="pm:GetStatus"/>
 
+      <!-- Peer tables (privilege tiers) -->
+      <xs:element name="register-peer-table" type="pm:RegisterPeerTable"/>
+      <xs:element name="modify-peer-table" type="pm:ModifyPeerTable"/>
+
       <!-- Configuration -->
       <xs:element name="set-config" type="pm:SetConfig"/>
       <xs:element name="get-config" type="pm:GetConfig"/>
@@ -324,6 +328,57 @@
   <xs:complexType name="UnregisterRemoteGateway">
     <xs:sequence>
       <xs:element name="url" type="xs:anyURI"/>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- ============================================================
+       REQUEST TYPES: Peer Tables (Privilege Tiers)
+       ============================================================ -->
+
+  <xs:complexType name="RegisterPeerTable">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/> <!-- Table name (e.g., "premium", "basic") -->
+      <xs:element name="entries" minOccurs="0">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="entry" maxOccurs="unbounded">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="listener" type="xs:string"/> <!-- Listener name -->
+                  <xs:element name="peers" minOccurs="0">
+                    <xs:complexType>
+                      <xs:sequence>
+                        <xs:element name="peer" type="xs:string" maxOccurs="unbounded"/>
+                      </xs:sequence>
+                    </xs:complexType>
+                  </xs:element>
+                </xs:sequence>
+              </xs:complexType>
+            </xs:element>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <xs:complexType name="ModifyPeerTable">
+    <xs:sequence>
+      <xs:element name="name" type="xs:string"/> <!-- Table name -->
+      <xs:element name="listener" type="xs:string"/> <!-- Listener to modify -->
+      <xs:element name="grant" minOccurs="0"> <!-- Peers to add -->
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="peer" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+      <xs:element name="revoke" minOccurs="0"> <!-- Peers to remove -->
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="peer" type="xs:string" maxOccurs="unbounded"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
     </xs:sequence>
   </xs:complexType>
 
