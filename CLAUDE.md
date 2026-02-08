@@ -15,6 +15,7 @@ A tamper-proof nervous system for multi-agent AI systems using XML as the sovere
 | Config | PyYAML | Latest | Organism configuration (organism.yaml) |
 | Crypto | cryptography | Latest | Ed25519 identity keys for signing |
 | HTTP | httpx | 0.27+ | LLM backend communication |
+| Math evaluation | simpleeval | 0.9+ | Safe expression evaluation (calculator tool) |
 | Case conversion | pyhumps | Latest | Snake/camel case conversion |
 
 > **Note:** TUI console and authentication are available in [OpenBlox](https://openblox.ai).
@@ -387,7 +388,7 @@ The project includes built-in tool implementations in `xml_pipeline/tools/`:
 
 | Tool | File | Purpose |
 |------|------|---------|
-| calculate | `calculate.py` | Math expression evaluation |
+| calculate | `calculate.py` | Math expression evaluation (also a listener — see below) |
 | fetch | `fetch.py` | HTTP requests |
 | files | `files.py` | File system operations |
 | shell | `shell.py` | Shell command execution |
@@ -395,6 +396,48 @@ The project includes built-in tool implementations in `xml_pipeline/tools/`:
 | keyvalue | `keyvalue.py` | Key-value storage (Redis optional) |
 | convert | `convert.py` | Data format conversion |
 | librarian | `librarian.py` | Documentation lookup |
+
+### Calculator Tool-as-Listener
+
+The calculator is the first native tool with full message-bus integration: `@xmlify` payload classes, a handler function, and the existing `@tool`-decorated function — all in `xml_pipeline/tools/calculate.py`.
+
+**Evaluation engine:** `simpleeval` (safe expression evaluation — no `ast` visitor). Supports `+ - * / // % **`, comparisons, 18 math functions (`sqrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `log`, `log10`, `log2`, `exp`, `floor`, `ceil`, `abs`, `round`, `min`, `max`, `pow`), and 4 constants (`pi`, `e`, `tau`, `inf`).
+
+**Payload classes:**
+
+```python
+from xml_pipeline.tools import Calculate, CalculateResult
+
+# Request
+Calculate(expression="sqrt(16) + pi")
+
+# Response — echoes expression, result as string, error empty on success
+CalculateResult(expression="sqrt(16) + pi", result="7.141592653589793", error="")
+```
+
+**Handler:** `handle_calculate(payload, metadata)` — always uses `.respond()` (returns to caller, never forwards). On error, `result` is empty and `error` contains the message.
+
+**Registration as a listener:**
+
+```python
+pump.register("calculator", handle_calculate, Calculate,
+              description="Evaluate math expressions safely")
+```
+
+**Direct use (without message bus):**
+
+```python
+from xml_pipeline.tools import calculate
+from xml_pipeline.tools.calculate import safe_eval
+
+# @tool wrapper → ToolResult
+result = await calculate(expression="2 ** 10")  # ToolResult(success=True, data=1024)
+
+# Raw evaluation → int/float/bool
+value = safe_eval("2 ** 10")  # 1024
+```
+
+**Known limitation:** `simpleeval` does not support ternary expressions (`a if cond else b`).
 
 ## System Primitives
 
@@ -511,6 +554,7 @@ When working on tasks involving these technologies, invoke the corresponding ski
 
 | Skill | Invoke When |
 |-------|-------------|
+| simpleeval | Evaluates math expressions safely in the calculator tool/listener |
 | pyhumps | Converts between snake_case and camelCase naming conventions |
 | xmlable | Manages dataclass ↔ XML serialization and automatic XSD generation |
 | pyyaml | Loads and validates organism.yaml configuration files |
