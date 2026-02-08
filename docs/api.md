@@ -187,6 +187,7 @@ await pump.inject(
     *,
     from_id: str = "external",
     thread_id: str | None = None,
+    routing_table: str | None = None,
 ) -> str
 ```
 
@@ -199,6 +200,7 @@ automatically — no need to call `_wrap_in_envelope()`.
 | `payload` | `@xmlify` dataclass instance |
 | `from_id` | Sender identity (default `"external"`) |
 | `thread_id` | Thread UUID; created automatically from root thread if not provided |
+| `routing_table` | Named peer table for this thread (see [Peer Tables](#peer-tables)) |
 
 **Returns:** The `thread_id` used for the message.
 
@@ -207,6 +209,10 @@ automatically — no need to call `_wrap_in_envelope()`.
 ```python
 thread = await pump.inject("greeter", Greeting(name="Alice"))
 print(f"Started thread: {thread}")
+
+# Inject with a peer table for privilege-scoped dispatch
+thread = await pump.inject("concierge", Request(query="help"),
+                           routing_table="premium")
 ```
 
 **Backward compatibility:** Passing raw bytes as the first argument still works but
@@ -249,6 +255,73 @@ await pump.shutdown() -> None
 ```
 
 Graceful shutdown — drains the message queue and closes resources (process pool, etc.).
+
+### register_peer_table()
+
+```python
+pump.register_peer_table(
+    name: str,
+    peers: dict[str, list[str]],
+) -> None
+```
+
+Register a named peer table (privilege tier). Peer tables override the static
+`Listener.peers` for all threads using this table. Tables are mutable — modifying
+a table immediately affects all threads using it.
+
+| Parameter | Description |
+|-----------|-------------|
+| `name` | Unique table name (e.g., `"premium"`, `"basic"`) |
+| `peers` | Mapping of `{ listener_name: [allowed_peers] }` |
+
+**Example:**
+
+```python
+pump.register_peer_table("premium", {
+    "concierge": ["calculator", "search", "billing"],
+    "researcher": ["search", "calculator"],
+})
+pump.register_peer_table("basic", {
+    "concierge": ["calculator"],
+})
+```
+
+Raises `KeyError` if the table name already exists.
+
+### modify_peer_table()
+
+```python
+pump.modify_peer_table(
+    name: str,
+    listener_name: str,
+    *,
+    grant: list[str] | None = None,
+    revoke: list[str] | None = None,
+) -> list[str]
+```
+
+Modify a single listener's peers within a named table. Returns the updated peers list.
+Changes take effect immediately on all threads using this table.
+
+| Parameter | Description |
+|-----------|-------------|
+| `name` | Table name (must already exist) |
+| `listener_name` | Listener to modify within the table |
+| `grant` | Peers to add |
+| `revoke` | Peers to remove |
+
+**Returns:** Updated list of peers for the listener in this table.
+
+**Example:**
+
+```python
+# Grant billing access to concierge in premium tier
+updated = pump.modify_peer_table("premium", "concierge",
+                                 grant=["billing"], revoke=["search"])
+# updated == ["calculator", "billing"]
+```
+
+Raises `KeyError` if the table name doesn't exist.
 
 ### subscribe_events() / unsubscribe_events()
 
@@ -425,6 +498,97 @@ await pump.queue.get()
 # Inject test message
 await pump.inject("echo", EchoPayload(text="hello"))
 ```
+
+---
+
+## Peer Tables
+
+Peer tables provide thread-scoped privilege enforcement. Instead of relying solely
+on the static `peers` list declared at registration time, peer tables allow different
+threads to use different peer mappings — enabling use cases like premium vs basic
+user tiers.
+
+### How It Works
+
+1. **Register a table** with `pump.register_peer_table(name, peers)`
+2. **Inject with the table** using `pump.inject(target, payload, routing_table=name)`
+3. **Dispatch enforcement** reads from the table on every message (not from `listener.peers`)
+4. **Modify at runtime** with `pump.modify_peer_table()` — changes affect all threads immediately
+
+### Thread Chain Encoding
+
+The table name is embedded in the thread chain prefix:
+- Default threads: `system.organism.external.concierge` (uses `listener.peers`)
+- Tabled threads: `premium.organism.external.concierge` (uses `_peer_tables["premium"]`)
+
+Since chains are behind opaque UUIDs, agents cannot see or tamper with which table
+they are on.
+
+### Example: Multi-Tier Concierge
+
+```python
+from xml_pipeline import StreamPump
+
+pump = StreamPump(name="my-org")
+pump.register("concierge", handle_concierge, Request,
+              agent=True, peers=["calculator", "search", "billing"],
+              description="Customer service agent")
+pump.register("calculator", calc_handler, CalcPayload, description="Calculator")
+pump.register("search", search_handler, SearchPayload, description="Search")
+pump.register("billing", billing_handler, BillingPayload, description="Billing")
+
+await pump.start()
+
+# Define privilege tiers
+pump.register_peer_table("premium", {
+    "concierge": ["calculator", "search", "billing"],
+})
+pump.register_peer_table("basic", {
+    "concierge": ["calculator"],
+})
+
+# Premium user — concierge can call all three tools
+await pump.inject("concierge", Request(query="Check my bill"),
+                  routing_table="premium")
+
+# Basic user — concierge can only call calculator
+await pump.inject("concierge", Request(query="What is 2+2?"),
+                  routing_table="basic")
+
+# Revoke search from premium mid-conversation
+pump.modify_peer_table("premium", "concierge", revoke=["search"])
+```
+
+### OOB Commands
+
+Peer tables can also be managed via the OOB privileged channel:
+
+```xml
+<register-peer-table xmlns="https://xml-pipeline.org/privileged-msg">
+  <name>premium</name>
+  <entries>
+    <entry>
+      <listener>concierge</listener>
+      <peers><peer>calculator</peer><peer>search</peer></peers>
+    </entry>
+  </entries>
+</register-peer-table>
+```
+
+```xml
+<modify-peer-table xmlns="https://xml-pipeline.org/privileged-msg">
+  <name>premium</name>
+  <listener>concierge</listener>
+  <grant><peer>billing</peer></grant>
+  <revoke><peer>search</peer></revoke>
+</modify-peer-table>
+```
+
+### Usage Instructions
+
+Agents in tabled threads automatically receive table-specific `usage_instructions`
+in their `HandlerMetadata`. These reflect the table's peer list, not the listener's
+static peers — so the LLM sees tool documentation matching its actual permissions.
 
 ---
 

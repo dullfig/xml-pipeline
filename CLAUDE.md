@@ -262,6 +262,7 @@ listeners:
 
 - **Handler Isolation:** Handlers cannot forge identity, escape threads, or probe topology
 - **Peer Constraints:** Agents can only send to declared peers in config
+- **Peer Tables:** Named, mutable peer mappings for thread-scoped privilege enforcement (e.g., premium/basic tiers). Table name embedded in thread chain prefix behind opaque UUID. Dispatch re-reads table on every message — mid-conversation revocation supported
 - **Opaque Thread UUIDs:** Handlers see only UUIDs, never internal call chains
 - **Envelope Injection:** `<from>`, `<thread>`, `<to>` always set by system, never by handlers
 - **OOB Channel:** Privileged commands use separate localhost-only channel

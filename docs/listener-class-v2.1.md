@@ -67,7 +67,7 @@ listeners:
 
 Optional flags:
 - `agent: true` → designates an LLM-driven listener (enforces unique root tag, exposes `own_name` in metadata)
-- `peers:` → list of registered names this listener is allowed to call (enforced by pump for agents)
+- `peers:` → list of registered names this listener is allowed to call (enforced by pump for agents). Can be overridden per-thread by [peer tables](api.md#peer-tables)
 - `broadcast: true` → allows multiple listeners to intentionally share the same derived root tag (used for parallel gateways/retrievers)
 
 ### Python Declaration
@@ -179,10 +179,10 @@ Any failure (duplicate root, missing description, import error) → clear error 
 - Root tag fully derived, never manually specified
 - Global uniqueness guaranteed by registered-name prefix
 - Handlers return typed `HandlerResponse` or `None` (never raw bytes or envelopes)
-- Handlers receive trustworthy metadata including peer `usage_instructions` for LLMs
+- Handlers receive trustworthy metadata including peer `usage_instructions` for LLMs (table-specific if thread uses a peer table)
 - All envelope construction and provenance injection performed exclusively by the pump
 - `<from>` always pump-injected (handlers cannot forge identity)
-- `<to>` validated against `peers` list for agents (cannot route to undeclared targets)
+- `<to>` validated against effective peers — peer table override or static `peers` list (cannot route to undeclared targets)
 - `<thread>` managed by thread registry (handlers cannot escape context)
 - Zero manual XSDs, examples, or prompt fragments required
 

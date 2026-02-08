@@ -132,14 +132,22 @@ The message pump enforces security boundaries. Handlers are **untrusted code**.
 
 ### Peer Constraint Enforcement
 
-Agents can only send to listeners declared in their `peers` list:
+Agents can only send to listeners in their **effective peers** list. The effective
+peers are resolved per-thread at dispatch time:
+
+- **Default threads** (no peer table): uses the static `peers` from registration
+- **Tabled threads** (created with `routing_table=`): uses the peer table's entry for this listener
 
 ```yaml
 listeners:
   - name: greeter
     agent: true
-    peers: [shouter, logger]  # Can only send to these
+    peers: [shouter, logger]  # Default — overridden by peer table if thread uses one
 ```
+
+Peer tables are mutable. Modifying a table immediately affects all threads using
+it — the dispatch check re-reads from the table on every message. This enables
+mid-conversation privilege revocation without restart.
 
 If an agent tries to send to an undeclared peer:
 1. Message is **blocked** (never routed)

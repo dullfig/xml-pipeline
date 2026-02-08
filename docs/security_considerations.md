@@ -62,11 +62,27 @@ Layered approach:
 - Per-thread visibility (some threads may be restricted)
 - Config sections (prompts may be more sensitive than routing)
 
+### Peer Tables (Dynamic Authorization)
+
+Peer tables provide thread-scoped, mutable authorization enforcement:
+
+- **Named tables** (e.g., `premium`, `basic`) define per-listener peer mappings that override static `Listener.peers`
+- **Thread-scoped**: table name embedded in thread chain prefix (behind opaque UUID), invisible to agents
+- **Mutable at runtime**: modifying a table immediately affects all threads using it — enables mid-conversation privilege revocation
+- **Dispatch-time enforcement**: the pump re-reads table contents on every message (no caching, no stale grants)
+- **Managed via OOB**: `register-peer-table` and `modify-peer-table` privileged commands, or programmatic API
+
+This enables use cases like:
+- Premium vs basic user tiers with different tool access
+- Revoking a capability from a running conversation without restart
+- A/B testing different permission sets across concurrent threads
+
 ### Principle of Least Privilege
 
 - Default deny
 - GUI gets only what it needs to render
 - Operators can't see raw prompts unless explicitly granted
+- Peer tables should grant the minimum set of peers needed per tier
 
 ---
 

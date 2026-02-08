@@ -27,6 +27,7 @@ These principles are the single canonical source of truth for the project. All d
 - LLM-based agents must use unique root tags (enforced on registration/hot-reload) to enable blind self-iteration.
 - Runtime structural changes (add/remove listeners, rewire agents, etc.) via local-only privileged commands on the dedicated OOB channel (hot-reload capability).
 - No remote or unprivileged structural changes ever.
+- **Peer tables** provide named, mutable peer mappings that override static `peers` lists for threads using a specific table. Tables are registered at runtime via API or OOB and embedded in thread chains for thread-scoped privilege enforcement.
 
 ## Autonomous Schema Layer
 - Listeners defined by `@xmlify`-decorated dataclass (payload contract) + pure handler function.
@@ -88,11 +89,18 @@ These principles are the single canonical source of truth for the project. All d
 - Handler output never trusted for identity, routing, or thread context – all envelope metadata injected from coroutine-captured state.
 - Even compromised handlers cannot forge messages, escape threads, or discover topology beyond declared peers.
 
+### Peer Tables (Dynamic Authorization)
+- Named peer tables override static `Listener.peers` at dispatch time, enabling thread-scoped privilege tiers (e.g., `premium`, `basic`).
+- Table name is embedded in the thread chain prefix (`premium.organism.external.concierge` instead of `system.organism.external.concierge`). Behind opaque UUIDs, invisible to agents.
+- Tables are mutable: modifying a table's contents immediately affects all threads using it — no restart, no re-registration.
+- Dispatch enforcement re-reads from the table on every message, enabling mid-conversation privilege revocation.
+- Managed via `pump.register_peer_table()`, `pump.modify_peer_table()`, or OOB privileged commands.
+
 ### Topology Privacy
 - Opaque thread UUIDs prevent topology disclosure to handlers and agents.
 - Private path registry maps UUIDs to hierarchical paths (e.g., `agent.tool.subtool`) for routing and audit.
 - Agents receive only opaque UUIDs; system maintains authoritative path mapping.
-- Peers list enforces capability boundaries: agents can only call declared tools.
+- Peers list (or peer table override) enforces capability boundaries: agents can only call declared tools.
 
 ### Anti-Paperclip Guarantees
 - No persistent cross-thread memory (threads are ephemeral audit trails).
@@ -241,13 +249,15 @@ Handlers can only:
 
 ### Peer Constraint Enforcement
 
-Agents can only send to listeners in their `peers` list:
+Agents can only send to listeners in their effective peers list. The effective peers
+are resolved per-thread: if the thread belongs to a peer table, the table's peers
+are used; otherwise, the static `Listener.peers` from registration apply.
 
 ```yaml
 listeners:
   - name: greeter
     agent: true
-    peers: [shouter, logger]  # Enforced by pump
+    peers: [shouter, logger]  # Default — overridden by peer table if thread uses one
 ```
 
 Violation handling:

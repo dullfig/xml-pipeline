@@ -125,8 +125,15 @@ else:
     new_thread = thread_registry.extend_chain(state.thread_id, target)
 
     # Peer constraint enforcement (agents only)
-    if listener.is_agent and listener.peers:
-        if target not in listener.peers:
+    # Resolve effective peers: peer table overrides static listener.peers
+    table_name = thread_registry.get_table_for_thread(state.thread_id)
+    if table_name and table_name in pump._peer_tables:
+        effective_peers = pump._peer_tables[table_name].get(listener.name, listener.peers)
+    else:
+        effective_peers = listener.peers
+
+    if listener.is_agent and effective_peers:
+        if target not in effective_peers:
             await emit_system_error(state, "Routing error")
             return
 
@@ -147,8 +154,9 @@ await route_and_process(new_state)
 **Key security properties:**
 - `<from>` always injected from `current_listener.name` (coroutine-captured)
 - `<thread>` always from thread registry (never handler output)
-- `<to>` validated against peers list for agents
+- `<to>` validated against effective peers (peer table override or static `listener.peers`)
 - Handlers cannot forge identity, escape threads, or bypass peer constraints
+- Peer table lookup happens on every dispatch (mutable — mid-conversation revocation supported)
 
 ---
 
@@ -195,7 +203,7 @@ async def dispatcher(state: MessageState):
 3. Routing resolution is a normal pipeline step → dispatcher receives pre-routed targets.
 4. Handlers return `HandlerResponse` (or `None` to terminate) → pump wraps payload in envelope and re-injects.
 5. Provenance (`<from>`) and thread continuity injected by pump, never by handlers.
-6. Peer constraints enforced by pump — agents can only send to declared peers.
+6. Peer constraints enforced by pump — agents can only send to effective peers (peer table override or static `listener.peers`).
 7. Thread registry manages call chains — `.respond()` prunes, forward extends.
 8. `<huh>` guards protect against step failures; `<SystemError>` for routing violations.
 9. Extensibility: new steps (token counting, rate limiting, logging) insert anywhere in default list.

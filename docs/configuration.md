@@ -176,6 +176,55 @@ llm:
       api_key_env: XAI_API_KEY    # Reads from environment
 ```
 
+### Peer Tables (Runtime Privilege Tiers)
+
+Peer tables provide thread-scoped privilege enforcement, allowing different threads
+to use different peer mappings. They are registered at runtime (not in YAML) via
+the programmatic API or OOB privileged commands.
+
+**Programmatic API:**
+```python
+pump.register_peer_table("premium", {
+    "concierge": ["calculator", "search", "billing"],
+})
+pump.register_peer_table("basic", {
+    "concierge": ["calculator"],
+})
+
+# Inject with a specific table
+await pump.inject("concierge", Request(query="help"), routing_table="premium")
+
+# Modify at runtime (immediate effect on all threads using this table)
+pump.modify_peer_table("premium", "concierge", revoke=["search"])
+```
+
+**OOB Commands:**
+
+Register a peer table:
+```xml
+<register-peer-table xmlns="https://xml-pipeline.org/privileged-msg">
+  <name>premium</name>
+  <entries>
+    <entry>
+      <listener>concierge</listener>
+      <peers><peer>calculator</peer><peer>search</peer></peers>
+    </entry>
+  </entries>
+</register-peer-table>
+```
+
+Modify a peer table (grant/revoke):
+```xml
+<modify-peer-table xmlns="https://xml-pipeline.org/privileged-msg">
+  <name>premium</name>
+  <listener>concierge</listener>
+  <grant><peer>billing</peer></grant>
+  <revoke><peer>search</peer></revoke>
+</modify-peer-table>
+```
+
+See [Public API](api.md#peer-tables) for full reference.
+
 ### Key Invariants (v2.1)
 - Root tag = `{lowercase_name}.{lowercase_dataclass_name}` — fully derived, never written manually.
 - Registered names must be unique across the organism.
@@ -183,5 +232,6 @@ llm:
 - Broadcast listeners may share root tags intentionally (same dataclass required).
 - Agents always have unique root tags (enforced automatically).
 - All structural changes after bootstrap require privileged OOB hot-reload.
+- Peer tables are runtime-only (not declared in YAML); managed via API or OOB commands.
 
-This YAML is the organism’s DNA — precise, auditable, minimal, and fully aligned with listener-class-v2.1.md.
+This YAML is the organism's DNA — precise, auditable, minimal, and fully aligned with listener-class-v2.1.md.
