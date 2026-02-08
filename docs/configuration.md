@@ -24,6 +24,10 @@ oob:                                            # Out-of-band privileged channel
   port: 8766                                    # Separate WSS port from main bus
   # unix_socket: "/tmp/organism.sock"           # Alternative binding
 
+auth:                                           # Authentication for OOB channel
+  totp_secret_env: ORGANISM_TOTP_SECRET         # Env var holding base32 TOTP secret
+  totp_required: true                           # Require TOTP on OOB connections
+
 thread_scheduling: "breadth-first"              # or "depth-first"
 
 meta:
@@ -80,6 +84,24 @@ gateways:
     trusted_identity: "pubkeys/search_node.ed25519.pub"
     description: "Federated web search gateway group."
 
+peer_tables:                                    # Privilege tiers (subtract-only)
+  - name: admin
+    entries:
+      - listener: researcher
+        peers: [calculator.add, calculator.multiply, local_summarizer, web_search]
+
+  - name: operator
+    parent: admin                               # Ceiling = admin's peer list
+    entries:
+      - listener: researcher
+        peers: [calculator.add, calculator.multiply]
+
+  - name: viewer
+    parent: operator
+    entries:
+      - listener: researcher
+        peers: [calculator.add]
+
 llm:
   strategy: failover                      # failover | round-robin | least-loaded
   retries: 3                              # Max retry attempts per request
@@ -115,6 +137,18 @@ Privileged local control channel (GUI/hot-reload ready).
 - Disabled → fully static configuration (restart required for changes).
 - Bound to localhost by default for security.
 
+#### `auth`
+Authentication settings for the OOB privileged channel.
+- `totp_secret_env`: Environment variable name holding the base32 TOTP secret. When set, OOB connections require TOTP as a second factor alongside Ed25519 signing.
+- `totp_required`: If `true`, connections without a valid TOTP token are rejected. Generate a secret with `xml-pipeline keygen --totp`.
+
+**TOTP handshake:** When `totp_secret_env` is configured, the first message on each OOB connection must be:
+```xml
+<privileged-msg version="1.1">
+  <payload id="auth"><totp-auth><token>123456</token></totp-auth></payload>
+</privileged-msg>
+```
+
 #### `thread_scheduling` *(not yet implemented)*
 Subthread execution policy across the organism.
 - `"breadth-first"` (default): fair round-robin, prevents deep branch starvation.
@@ -143,6 +177,41 @@ Federation peers (trusted remote organisms).
 - Referenced in agent `peers:` lists by their registered `name`.
 
 **Note:** Gateways are **not yet implemented** at runtime. These declarations are parsed for forward-compatibility but no outbound connections or message forwarding occurs.
+
+#### `peer_tables`
+Named peer tables for thread-scoped privilege enforcement, declared in YAML. Tables use a **subtract-only hierarchy**: YAML `listener.peers` is the root ceiling — tables can only restrict, never expand beyond it.
+
+- `name`: Unique table name (e.g., `"admin"`, `"operator"`, `"viewer"`).
+- `parent`: Optional parent table name. If set, this table's ceiling is the parent's peer list instead of the YAML listener.peers. If omitted, ceiling comes from YAML.
+- `entries`: List of `{ listener, peers }` mappings defining allowed peers for each listener in this table.
+
+**Ceiling enforcement:**
+- Every peer listed in a table must exist in its ceiling (parent table's peers, or YAML `listener.peers`).
+- `modify_peer_table(..., grant=[])` also enforces the ceiling — you can restore revoked peers up to the ceiling but never exceed it.
+- `modify_peer_table(..., revoke=[])` always succeeds (subtraction is always valid).
+
+**Registration order:** Tables are registered in topological order during bootstrap (parents before children). Circular parent chains are detected and rejected.
+
+```yaml
+peer_tables:
+  - name: admin
+    # No parent → ceiling is YAML listener.peers
+    entries:
+      - listener: concierge
+        peers: [calculator, search, billing]
+
+  - name: operator
+    parent: admin
+    entries:
+      - listener: concierge
+        peers: [calculator, search]  # Must be subset of admin.concierge
+
+  - name: viewer
+    parent: operator
+    entries:
+      - listener: concierge
+        peers: [calculator]          # Must be subset of operator.concierge
+```
 
 #### `llm`
 LLM router configuration for agents. See `llm-router-v2.1.md` for complete specification.

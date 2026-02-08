@@ -42,12 +42,12 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 |---------|--------|-------|-------|
 | Ed25519 envelope signing (`crypto/signing.py`) | READY | yes | Optional on main bus, enforced on OOB |
 | OOB privileged channel (localhost WebSocket) | READY | 80 | Command dispatch, event push |
-| Peer tables (thread-scoped privilege tiers) | READY | 16 | Runtime mutation, OOB commands |
+| Peer tables (thread-scoped privilege tiers) | READY | 52 | Runtime mutation, OOB commands, YAML declarations, ceiling enforcement, parent hierarchy |
 | Peer constraint enforcement (dispatch-time) | READY | yes | Re-reads table on every message |
 | Handler isolation (coroutine capture boundary) | READY | yes | Handlers cannot forge identity/thread |
 | Opaque thread UUIDs | READY | yes | — |
 | TLS/WSS on main bus | MISSING | 0 | Config accepts `tls.cert`/`tls.key`; no certificate loading or enforcement |
-| TOTP authentication | MISSING | 0 | `AuthConfig.totp_secret_env` field exists; no generation or validation |
+| TOTP authentication (OOB channel) | READY | 35 | RFC 6238 stdlib TOTP; OOB connection handshake; CLI `keygen --totp` |
 | Federation / gateway forwarding | MISSING | 0 | Config schema parsed; zero runtime — no outbound WSS, no identity verification |
 
 ---
@@ -138,8 +138,9 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 
 ### P3 — Future (documented aspirations)
 11. TLS enforcement on main bus
-12. TOTP authentication
+12. ~~TOTP authentication~~ — DONE: RFC 6238 stdlib TOTP for OOB channel (35 tests)
 13. Federation / gateway runtime
 14. Thread scheduling (breadth-first / depth-first)
 15. XML meta introspection handlers
 16. Fair-share queuing / backpressure
+17. ~~YAML peer table declarations~~ — DONE: subtract-only hierarchy with ceiling enforcement (36 tests)

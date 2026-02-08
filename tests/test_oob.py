@@ -674,8 +674,9 @@ class TestOOBHandlers:
         registry = get_registry()
         registry.initialize_root("test-oob")
         pump.register("concierge", _oob_test_handler, TestPayload,
-                       description="Concierge", agent=True, peers=["tool1"])
+                       description="Concierge", agent=True, peers=["tool1", "tool2"])
         pump.register("tool1", _oob_test_handler, TestPayload, description="Tool 1")
+        pump.register("tool2", _oob_test_handler, TestPayload, description="Tool 2")
 
         el = etree.fromstring(
             f'<register-peer-table xmlns="{NS}">'
@@ -702,7 +703,7 @@ class TestOOBHandlers:
         pump = _make_pump()
         registry = get_registry()
         registry.initialize_root("test-oob")
-        pump.register_peer_table("existing", {"a": ["b"]})
+        pump.register_peer_table("existing", {})
 
         el = etree.fromstring(
             f'<register-peer-table xmlns="{NS}">'
@@ -721,7 +722,7 @@ class TestOOBHandlers:
         registry = get_registry()
         registry.initialize_root("test-oob")
         pump.register("concierge", _oob_test_handler, TestPayload,
-                       description="Concierge", agent=True, peers=["tool1"])
+                       description="Concierge", agent=True, peers=["tool1", "tool2"])
         pump.register_peer_table("premium", {"concierge": ["tool1"]})
 
         el = etree.fromstring(
@@ -778,7 +779,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("concierge", _oob_test_handler, TestPayload,
-                       description="Concierge agent", agent=True, peers=["tool1"])
+                       description="Concierge agent", agent=True, peers=["tool1", "tool2"])
         pump.register("tool1", _oob_test_handler, TestPayload, description="Tool 1")
 
         pump.register_peer_table("premium", {
@@ -802,7 +803,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("concierge", _oob_test_handler, TestPayload,
-                       description="Concierge", agent=True, peers=["tool1"])
+                       description="Concierge", agent=True, peers=["tool1", "tool2"])
         pump.register_peer_table("premium", {"concierge": ["tool1", "tool2"]})
 
         thread_id = await pump.inject("concierge", TestPayload(value="hello"),
@@ -845,7 +846,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("agent", _oob_test_handler, TestPayload,
-                       description="Agent", agent=True, peers=["tool1"])
+                       description="Agent", agent=True, peers=["tool1", "tool2", "tool3"])
         pump.register_peer_table("basic", {"agent": ["tool1"]})
 
         updated = pump.modify_peer_table("basic", "agent", grant=["tool2", "tool3"])
@@ -859,7 +860,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("agent", _oob_test_handler, TestPayload,
-                       description="Agent", agent=True, peers=["tool1"])
+                       description="Agent", agent=True, peers=["tool1", "tool2", "tool3"])
         pump.register_peer_table("premium", {"agent": ["tool1", "tool2", "tool3"]})
 
         updated = pump.modify_peer_table("premium", "agent", revoke=["tool2"])
@@ -879,7 +880,8 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("concierge", _oob_test_handler, TestPayload,
-                       description="Concierge agent", agent=True, peers=["tool1"])
+                       description="Concierge agent", agent=True,
+                       peers=["tool1", "tool2", "tool3"])
         pump.register("tool1", _oob_test_handler, TestPayload, description="Tool 1")
         pump.register("tool2", _oob_test_handler, TestPayload, description="Tool 2")
         pump.register("tool3", _oob_test_handler, TestPayload, description="Tool 3")
@@ -888,21 +890,20 @@ class TestPeerTables:
         concierge = pump.listeners["concierge"]
         concierge.usage_instructions = pump._build_usage_instructions(concierge)
 
+        # Register a table with a subset (ceiling enforcement: subset of listener.peers)
         pump.register_peer_table("premium", {
-            "concierge": ["tool1", "tool2", "tool3"],
+            "concierge": ["tool1", "tool2"],
         })
 
-        # Table usage instructions should mention all three tools
+        # Table usage instructions should mention tool1 and tool2
         table_instr = pump._table_usage_instructions["premium"]["concierge"]
         assert "tool1" in table_instr
         assert "tool2" in table_instr
-        assert "tool3" in table_instr
 
-        # Listener's static usage_instructions should only mention tool1
+        # Listener's static usage_instructions should mention all three
         listener_instr = concierge.usage_instructions
         assert "tool1" in listener_instr
-        # tool2 and tool3 are not in listener.peers (only "tool1"), so not in static docs
-        assert "## tool2" not in listener_instr
+        assert "## tool3" in listener_instr
 
     def test_modify_rebuilds_usage_instructions(self):
         """modify_peer_table rebuilds usage_instructions for the affected listener."""
@@ -911,7 +912,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("agent", _oob_test_handler, TestPayload,
-                       description="Agent", agent=True, peers=["tool1"])
+                       description="Agent", agent=True, peers=["tool1", "tool2"])
         pump.register("tool1", _oob_test_handler, TestPayload, description="Tool 1")
         pump.register("tool2", _oob_test_handler, TestPayload, description="Tool 2")
 
@@ -930,7 +931,7 @@ class TestPeerTables:
         registry.initialize_root("test")
 
         pump.register("agent", _oob_test_handler, TestPayload,
-                       description="Agent", agent=True, peers=[])
+                       description="Agent", agent=True, peers=["a", "b", "c", "d"])
 
         pump.register_peer_table("premium", {"agent": ["a", "b", "c"]})
         pump.register_peer_table("basic", {"agent": ["a"]})

@@ -165,6 +165,13 @@ def cmd_version(args: argparse.Namespace) -> int:
 
 
 def cmd_keygen(args: argparse.Namespace) -> int:
+    """Generate Ed25519 identity keypair or TOTP secret."""
+    if args.totp:
+        return _keygen_totp(args)
+    return _keygen_ed25519(args)
+
+
+def _keygen_ed25519(args: argparse.Namespace) -> int:
     """Generate Ed25519 identity keypair."""
     from xml_pipeline.crypto import generate_identity
 
@@ -197,6 +204,30 @@ def cmd_keygen(args: argparse.Namespace) -> int:
     except Exception as e:
         print(f"Error generating keys: {e}", file=sys.stderr)
         return 1
+
+
+def _keygen_totp(args: argparse.Namespace) -> int:
+    """Generate TOTP secret for OOB channel authentication."""
+    from xml_pipeline.crypto.totp import generate_secret, get_provisioning_uri
+
+    name = args.name or "organism"
+    secret = generate_secret()
+    uri = get_provisioning_uri(secret, name)
+
+    print(f"Generated TOTP secret for OOB authentication:")
+    print(f"  Secret: {secret}")
+    print(f"  Provisioning URI: {uri}")
+    print()
+    print(f"Add to .env:")
+    print(f"  ORGANISM_TOTP_SECRET={secret}")
+    print()
+    print(f"Add to organism.yaml:")
+    print(f"  auth:")
+    print(f"    totp_secret_env: ORGANISM_TOTP_SECRET")
+    print(f"    totp_required: true")
+    print()
+    print("Scan the provisioning URI with your authenticator app (Google Authenticator, Authy, etc.).")
+    return 0
 
 
 def main() -> int:
@@ -236,13 +267,21 @@ def main() -> int:
     version_parser.set_defaults(func=cmd_version)
 
     # keygen
-    keygen_parser = subparsers.add_parser("keygen", help="Generate Ed25519 identity keypair")
+    keygen_parser = subparsers.add_parser("keygen", help="Generate Ed25519 identity keypair or TOTP secret")
     keygen_parser.add_argument(
         "-o", "--output",
         default="identity.key",
         help="Output path for private key (default: identity.key)",
     )
     keygen_parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing")
+    keygen_parser.add_argument(
+        "--totp", action="store_true",
+        help="Generate TOTP secret instead of Ed25519 keypair",
+    )
+    keygen_parser.add_argument(
+        "--name", default=None,
+        help="Organism name for TOTP provisioning URI",
+    )
     keygen_parser.set_defaults(func=cmd_keygen)
 
     args = parser.parse_args()

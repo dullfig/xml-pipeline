@@ -164,6 +164,14 @@ class OrganismConfig:
     oob_bind: str = "127.0.0.1"
     oob_port: int = 8766
 
+    # Auth (TOTP for OOB channel)
+    auth_totp_secret_env: str = ""
+    auth_totp_required: bool = False
+
+    # Peer tables from YAML config
+    # Each: {"name": str, "parent": str|None, "peers": {listener: [peers]}}
+    peer_table_configs: List[Dict[str, Any]] = field(default_factory=list)
+
 
 @dataclass
 class Listener:
@@ -358,6 +366,8 @@ class StreamPump:
         self._peer_tables: Dict[str, Dict[str, List[str]]] = {}
         # { table_name: { listener_name: usage_instructions_str } }
         self._table_usage_instructions: Dict[str, Dict[str, str]] = {}
+        # { table_name: parent_name | None }
+        self._peer_table_parents: Dict[str, Optional[str]] = {}
 
         # Worker registry for background processes
         from xml_pipeline.workers import WorkerRegistry
@@ -675,7 +685,12 @@ class StreamPump:
     # Peer Tables
     # ------------------------------------------------------------------
 
-    def register_peer_table(self, name: str, peers: Dict[str, List[str]]) -> None:
+    def register_peer_table(
+        self,
+        name: str,
+        peers: Dict[str, List[str]],
+        parent: Optional[str] = None,
+    ) -> None:
         """
         Register a named peer table (privilege tier).
 
@@ -683,11 +698,39 @@ class StreamPump:
         All dispatch enforcement for those threads uses the table's peer
         definitions instead of the listener's static peers list.
 
+        **Ceiling enforcement:** Every peer in the table must exist in the
+        parent's peer list (or in the listener's static ``peers`` from YAML
+        if no parent). Tables can only subtract from the ceiling, never expand.
+
         Args:
             name: Table name (e.g., "premium", "basic")
             peers: Mapping of listener_name -> [allowed_peers]
+            parent: Parent table name (None = inherit ceiling from YAML listener.peers)
+
+        Raises:
+            KeyError: If table name already exists
+            ValueError: If any peer exceeds the ceiling
         """
+        if name in self._peer_tables:
+            raise KeyError(f"Peer table '{name}' already registered")
+
+        if parent is not None and parent not in self._peer_tables:
+            raise KeyError(f"Parent table '{parent}' not registered")
+
+        # Validate ceiling: every peer must exist in parent's ceiling
+        for listener_name, peer_list in peers.items():
+            ceiling = self._get_peer_ceiling(listener_name, parent)
+            for p in peer_list:
+                if p not in ceiling:
+                    source = f"table '{parent}'" if parent else "YAML listener.peers"
+                    raise ValueError(
+                        f"Peer '{p}' for '{listener_name}' in table '{name}' "
+                        f"exceeds ceiling from {source}. "
+                        f"Ceiling: {ceiling}"
+                    )
+
         self._peer_tables[name] = dict(peers)
+        self._peer_table_parents[name] = parent
 
         # Initialize table root in thread registry
         registry = get_registry()
@@ -705,6 +748,23 @@ class StreamPump:
 
         pump_logger.info(f"Peer table '{name}' registered: {list(peers.keys())}")
 
+    def _get_peer_ceiling(
+        self, listener_name: str, parent_table: Optional[str]
+    ) -> List[str]:
+        """
+        Resolve the peer ceiling for a listener.
+
+        If parent_table is set and the parent has an entry for this listener,
+        use the parent's peer list. Otherwise fall back to the listener's
+        static peers from YAML registration.
+        """
+        if parent_table and parent_table in self._peer_tables:
+            parent_peers = self._peer_tables[parent_table].get(listener_name)
+            if parent_peers is not None:
+                return parent_peers
+        listener = self.listeners.get(listener_name)
+        return list(listener.peers) if listener else []
+
     def modify_peer_table(
         self,
         name: str,
@@ -715,6 +775,11 @@ class StreamPump:
     ) -> List[str]:
         """
         Modify a single listener's peers within a table.
+
+        **Ceiling enforcement on grants:** Granted peers must exist in the
+        parent table's ceiling (or YAML listener.peers). You can restore
+        revoked peers up to the ceiling, but never exceed it. Revocations
+        always succeed (subtraction is always valid).
 
         Args:
             name: Table name
@@ -727,16 +792,29 @@ class StreamPump:
 
         Raises:
             KeyError: If table does not exist.
+            ValueError: If any granted peer exceeds the ceiling.
         """
         if name not in self._peer_tables:
             raise KeyError(f"Peer table '{name}' not registered")
 
         current = list(self._peer_tables[name].get(listener_name, []))
 
+        # Validate grants against ceiling
         if grant:
+            parent = self._peer_table_parents.get(name)
+            ceiling = self._get_peer_ceiling(listener_name, parent)
+            for p in grant:
+                if p not in ceiling:
+                    source = f"table '{parent}'" if parent else "YAML listener.peers"
+                    raise ValueError(
+                        f"Cannot grant '{p}' to '{listener_name}' in table '{name}': "
+                        f"exceeds ceiling from {source}. Ceiling: {ceiling}"
+                    )
+
             for peer in grant:
                 if peer not in current:
                     current.append(peer)
+
         if revoke:
             current = [p for p in current if p not in revoke]
 
@@ -759,6 +837,46 @@ class StreamPump:
             f"Peer table '{name}' modified: {listener_name} -> {current}"
         )
         return current
+
+    def _register_config_peer_tables(self) -> None:
+        """
+        Register peer tables from YAML config in topological order.
+
+        Parents are registered before children. Circular parent chains
+        are detected and raise ValueError.
+        """
+        configs = {pt["name"]: pt for pt in self.config.peer_table_configs}
+        registered: set[str] = set()
+        in_progress: set[str] = set()  # For cycle detection
+
+        def _register(name: str) -> None:
+            if name in registered:
+                return
+            if name in in_progress:
+                raise ValueError(
+                    f"Circular peer table parent chain detected involving '{name}'"
+                )
+            if name not in configs:
+                raise KeyError(f"Peer table '{name}' referenced as parent but not defined")
+
+            in_progress.add(name)
+            pt = configs[name]
+            parent = pt.get("parent")
+            if parent:
+                _register(parent)
+            in_progress.discard(name)
+
+            self.register_peer_table(name, pt["peers"], parent=parent)
+            registered.add(name)
+
+        for pt in self.config.peer_table_configs:
+            _register(pt["name"])
+
+        if registered:
+            pump_logger.info(
+                f"Registered {len(registered)} peer table(s) from config: "
+                f"{sorted(registered)}"
+            )
 
     def _generate_schema(self, payload_class: type) -> etree.XMLSchema:
         """Generate XSD schema from xmlified payload class."""
@@ -877,17 +995,35 @@ class StreamPump:
         self._start_time = _time.time()
         if self.config.oob_enabled:
             try:
+                # Resolve TOTP secret from environment variable
+                totp_secret: Optional[str] = None
+                if self.config.auth_totp_secret_env:
+                    import os
+                    totp_secret = os.environ.get(self.config.auth_totp_secret_env)
+                    if self.config.auth_totp_required and not totp_secret:
+                        pump_logger.warning(
+                            f"TOTP required but {self.config.auth_totp_secret_env} "
+                            f"not set — OOB connections will be rejected"
+                        )
+                    elif totp_secret:
+                        pump_logger.info("OOB TOTP authentication enabled")
+
                 from xml_pipeline.oob import OOBServer
                 self._oob_server = OOBServer(
                     pump=self,
                     bind=self.config.oob_bind,
                     port=self.config.oob_port,
                     identity=self.identity,
+                    totp_secret=totp_secret,
                 )
                 await self._oob_server.start()
             except Exception as e:
                 pump_logger.warning(f"OOB server failed to start: {e}")
                 self._oob_server = None
+
+        # --- 9. Peer tables from config ---
+        if self.config.peer_table_configs:
+            self._register_config_peer_tables()
 
         pump_logger.info(
             f"Organism '{self.config.name}' started: "
@@ -1828,6 +1964,28 @@ class ConfigLoader:
         oob_bind = oob.get("bind", "127.0.0.1") if oob else "127.0.0.1"
         oob_port = oob.get("port", 8766) if oob else 8766
 
+        # Parse auth config
+        auth = raw.get("auth", {})
+        auth_totp_secret_env = auth.get("totp_secret_env", "") if auth else ""
+        auth_totp_required = auth.get("totp_required", False) if auth else False
+
+        # Parse peer tables
+        peer_table_configs: List[Dict[str, Any]] = []
+        for pt_raw in raw.get("peer_tables", []):
+            name = pt_raw.get("name", "")
+            parent = pt_raw.get("parent")
+            peers_dict: Dict[str, List[str]] = {}
+            for entry in pt_raw.get("entries", []):
+                listener_name = entry.get("listener", "")
+                peer_list = entry.get("peers", [])
+                if listener_name:
+                    peers_dict[listener_name] = peer_list
+            peer_table_configs.append({
+                "name": name,
+                "parent": parent,
+                "peers": peers_dict,
+            })
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -1847,6 +2005,9 @@ class ConfigLoader:
             oob_enabled=oob_enabled,
             oob_bind=oob_bind,
             oob_port=oob_port,
+            auth_totp_secret_env=auth_totp_secret_env,
+            auth_totp_required=auth_totp_required,
+            peer_table_configs=peer_table_configs,
         )
 
         for entry in raw.get("listeners", []):

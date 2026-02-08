@@ -340,6 +340,9 @@ def handle_register_peer_table(pump: StreamPump, el: etree._Element, request_id:
     if name in pump._peer_tables:
         return build_error(request_id, "ALREADY_EXISTS", f"Peer table '{name}' already registered")
 
+    # Parse optional parent
+    parent = _text(el, "parent") or None
+
     # Parse entries: { listener_name: [peers] }
     peers: dict[str, list[str]] = {}
     entries_el = el.find(f"{{{NS}}}entries")
@@ -355,7 +358,7 @@ def handle_register_peer_table(pump: StreamPump, el: etree._Element, request_id:
                     peers[listener_name] = entry_peers
 
     try:
-        pump.register_peer_table(name, peers)
+        pump.register_peer_table(name, peers, parent=parent)
     except Exception as e:
         return build_error(request_id, "REGISTRATION_ERROR", str(e))
 

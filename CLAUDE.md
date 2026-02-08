@@ -196,6 +196,8 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
 | `xml-pipeline init [name]` | Create new organism config template |
 | `xml-pipeline check [config]` | Validate config without running |
 | `xml-pipeline version` | Show version and installed features |
+| `xml-pipeline keygen` | Generate Ed25519 identity key |
+| `xml-pipeline keygen --totp` | Generate TOTP secret + provisioning URI |
 | `xp run [config]` | Short alias for xml-pipeline run |
 | `python -m examples.console` | Run interactive console example |
 | `pytest tests/ -v` | Run test suite |
@@ -208,6 +210,7 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
 | `XAI_API_KEY` | For xAI | xAI (Grok) API key | `xai-...` |
 | `ANTHROPIC_API_KEY` | For Anthropic | Anthropic (Claude) API key | `sk-ant-...` |
 | `OPENAI_API_KEY` | For OpenAI | OpenAI API key | `sk-...` |
+| `ORGANISM_TOTP_SECRET` | For OOB TOTP | Base32 TOTP secret for OOB auth | `JBSWY3DPEHPK...` |
 
 ## Testing
 
@@ -265,10 +268,11 @@ listeners:
 
 - **Handler Isolation:** Handlers cannot forge identity, escape threads, or probe topology
 - **Peer Constraints:** Agents can only send to declared peers in config
-- **Peer Tables:** Named, mutable peer mappings for thread-scoped privilege enforcement (e.g., premium/basic tiers). Table name embedded in thread chain prefix behind opaque UUID. Dispatch re-reads table on every message — mid-conversation revocation supported
+- **Peer Tables:** Named, mutable peer mappings for thread-scoped privilege enforcement (e.g., premium/basic tiers). Subtract-only ceiling hierarchy: YAML `listener.peers` is the root ceiling; tables can only restrict, never expand. Parent-child inheritance (`parent=` parameter). Table name embedded in thread chain prefix behind opaque UUID. Dispatch re-reads table on every message — mid-conversation revocation supported. Declarable in `organism.yaml` or via API/OOB.
+- **TOTP Authentication:** RFC 6238 TOTP (stdlib, no external deps) on OOB channel as second factor alongside Ed25519. Config: `auth.totp_secret_env` + `auth.totp_required`. CLI: `xml-pipeline keygen --totp`. First message on OOB connection must be `<totp-auth>` when enabled.
 - **Opaque Thread UUIDs:** Handlers see only UUIDs, never internal call chains
 - **Envelope Injection:** `<from>`, `<thread>`, `<to>` always set by system, never by handlers
-- **OOB Channel:** Privileged commands use separate localhost-only channel
+- **OOB Channel:** Privileged commands use separate localhost-only channel with optional TOTP gate
 
 ## Token Budget & Usage Tracking
 

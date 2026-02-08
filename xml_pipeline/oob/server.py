@@ -42,6 +42,10 @@ class OOBServer:
     Runs on a separate localhost-only port from the main message bus.
     Handles privileged commands (register/unregister listeners, inject
     messages, introspect state, shutdown) and pushes events to subscribers.
+
+    Supports optional TOTP authentication as a second factor alongside
+    Ed25519 signing. When ``totp_secret`` is set, the first message on
+    each connection must be a ``<totp-auth>`` command with a valid token.
     """
 
     def __init__(
@@ -51,15 +55,18 @@ class OOBServer:
         bind: str = "127.0.0.1",
         port: int = 8766,
         identity: Identity | None = None,
+        totp_secret: str | None = None,
     ) -> None:
         self.pump = pump
         self.bind = bind
         self.port = port
         self.identity = identity
+        self.totp_secret = totp_secret
 
         self._server: Any = None  # websockets.WebSocketServer
         self._clients: set[Any] = set()
         self._subscriptions: dict[str, Subscription] = {}
+        self._authenticated: set[int] = set()  # id(websocket) for TOTP-authenticated connections
 
     async def start(self) -> None:
         """Start the OOB WebSocket server."""
@@ -117,6 +124,20 @@ class OOBServer:
             async for raw_message in websocket:
                 if isinstance(raw_message, str):
                     raw_message = raw_message.encode("utf-8")
+
+                # TOTP gate: first message must be totp-auth when secret is set
+                if self.totp_secret and id(websocket) not in self._authenticated:
+                    totp_ok = self._check_totp_auth(raw_message, websocket)
+                    if totp_ok:
+                        from xml_pipeline.oob.protocol import build_ack
+                        await websocket.send(build_ack("", "TOTP authenticated"))
+                        continue
+                    else:
+                        error_response = build_error("", "AUTH_REQUIRED", "TOTP authentication required")
+                        await websocket.send(error_response)
+                        await websocket.close()
+                        return
+
                 try:
                     response = await self._dispatch(raw_message, websocket)
                     await websocket.send(response)
@@ -128,6 +149,7 @@ class OOBServer:
             pass  # Connection closed
         finally:
             self._clients.discard(websocket)
+            self._authenticated.discard(id(websocket))
             # Clean up subscriptions for this client
             to_remove = [
                 sid for sid, sub in self._subscriptions.items()
@@ -136,6 +158,35 @@ class OOBServer:
             for sid in to_remove:
                 del self._subscriptions[sid]
             logger.debug(f"OOB client disconnected: {remote}")
+
+    def _check_totp_auth(self, raw_xml: bytes, websocket: Any) -> bool:
+        """
+        Check if raw_xml is a valid totp-auth command with correct token.
+
+        If valid, marks the connection as authenticated and returns True.
+        """
+        try:
+            command_name, command_el, _request_id = parse_request(raw_xml)
+        except OOBAuthError:
+            return False
+
+        if command_name != "totp-auth":
+            return False
+
+        # Extract <token> text
+        from xml_pipeline.oob.handlers import _text
+        token = _text(command_el, "token")
+        if not token:
+            return False
+
+        from xml_pipeline.crypto.totp import verify_totp
+        if verify_totp(self.totp_secret, token):
+            self._authenticated.add(id(websocket))
+            logger.info(f"OOB client TOTP authenticated")
+            return True
+
+        logger.warning("OOB TOTP verification failed")
+        return False
 
     async def _dispatch(self, raw_xml: bytes, websocket: Any) -> bytes:
         """Parse, verify, and dispatch a privileged request."""

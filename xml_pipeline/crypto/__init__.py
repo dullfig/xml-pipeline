@@ -33,6 +33,13 @@ from xml_pipeline.crypto.signing import (
     SIGNATURE_NAMESPACE,
 )
 
+from xml_pipeline.crypto.totp import (
+    generate_secret as generate_totp_secret,
+    get_provisioning_uri,
+    compute_totp,
+    verify_totp,
+)
+
 __all__ = [
     # Identity
     "Identity",
@@ -43,4 +50,9 @@ __all__ = [
     "verify_envelope",
     "extract_signature",
     "SIGNATURE_NAMESPACE",
+    # TOTP
+    "generate_totp_secret",
+    "get_provisioning_uri",
+    "compute_totp",
+    "verify_totp",
 ]

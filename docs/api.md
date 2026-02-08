@@ -267,6 +267,8 @@ Graceful shutdown — drains the message queue and closes resources (process poo
 pump.register_peer_table(
     name: str,
     peers: dict[str, list[str]],
+    *,
+    parent: str | None = None,
 ) -> None
 ```
 
@@ -274,24 +276,38 @@ Register a named peer table (privilege tier). Peer tables override the static
 `Listener.peers` for all threads using this table. Tables are mutable — modifying
 a table immediately affects all threads using it.
 
+**Ceiling enforcement:** Every peer in the table must exist in the ceiling — the
+parent table's peers (if `parent` is set) or the YAML `listener.peers` (if no parent).
+Tables can only **restrict** permissions, never expand beyond the ceiling.
+
 | Parameter | Description |
 |-----------|-------------|
 | `name` | Unique table name (e.g., `"premium"`, `"basic"`) |
 | `peers` | Mapping of `{ listener_name: [allowed_peers] }` |
+| `parent` | Optional parent table name. Ceiling comes from parent instead of YAML `listener.peers` |
 
 **Example:**
 
 ```python
-pump.register_peer_table("premium", {
+# Register root table — ceiling is YAML listener.peers
+pump.register_peer_table("admin", {
     "concierge": ["calculator", "search", "billing"],
-    "researcher": ["search", "calculator"],
 })
-pump.register_peer_table("basic", {
+
+# Register child table — ceiling is admin's peers
+pump.register_peer_table("operator", {
+    "concierge": ["calculator", "search"],
+}, parent="admin")
+
+# Register grandchild — ceiling is operator's peers
+pump.register_peer_table("viewer", {
     "concierge": ["calculator"],
-})
+}, parent="operator")
 ```
 
-Raises `KeyError` if the table name already exists.
+**Raises:**
+- `KeyError` if the table name already exists or parent not found.
+- `ValueError` if any peer exceeds the ceiling.
 
 ### modify_peer_table()
 
@@ -308,12 +324,16 @@ pump.modify_peer_table(
 Modify a single listener's peers within a named table. Returns the updated peers list.
 Changes take effect immediately on all threads using this table.
 
+**Ceiling enforcement:** Grants are validated against the ceiling (parent table or YAML
+`listener.peers`). You can restore previously revoked peers up to the ceiling, but never
+exceed it. Revocations always succeed (subtraction is always valid).
+
 | Parameter | Description |
 |-----------|-------------|
 | `name` | Table name (must already exist) |
 | `listener_name` | Listener to modify within the table |
-| `grant` | Peers to add |
-| `revoke` | Peers to remove |
+| `grant` | Peers to add (must be within ceiling) |
+| `revoke` | Peers to remove (always valid) |
 
 **Returns:** Updated list of peers for the listener in this table.
 
@@ -324,9 +344,18 @@ Changes take effect immediately on all threads using this table.
 updated = pump.modify_peer_table("premium", "concierge",
                                  grant=["billing"], revoke=["search"])
 # updated == ["calculator", "billing"]
+
+# Revocations always succeed
+pump.modify_peer_table("premium", "concierge", revoke=["billing"])
+
+# Grants exceeding ceiling raise ValueError
+pump.modify_peer_table("viewer", "concierge",
+                       grant=["billing"])  # ValueError if billing not in parent
 ```
 
-Raises `KeyError` if the table name doesn't exist.
+**Raises:**
+- `KeyError` if the table name doesn't exist.
+- `ValueError` if any granted peer exceeds the ceiling.
 
 ### subscribe_events() / unsubscribe_events()
 
@@ -515,10 +544,28 @@ user tiers.
 
 ### How It Works
 
-1. **Register a table** with `pump.register_peer_table(name, peers)`
+1. **Register a table** with `pump.register_peer_table(name, peers, parent=...)` or declare in YAML
 2. **Inject with the table** using `pump.inject(target, payload, routing_table=name)`
 3. **Dispatch enforcement** reads from the table on every message (not from `listener.peers`)
 4. **Modify at runtime** with `pump.modify_peer_table()` — changes affect all threads immediately
+
+### Ceiling Model (Subtract-Only Hierarchy)
+
+Peer tables use a **subtract-only hierarchy** like Linux permissions. YAML `listener.peers`
+is the root ceiling — tables can only restrict, never expand beyond it.
+
+```
+YAML listener.peers (root ceiling)
+  └─ admin table    (= root, or subset)
+       └─ operator  (⊆ admin)
+            └─ viewer (⊆ operator)
+```
+
+**Key invariants:**
+- `register_peer_table()` validates every peer exists in the ceiling
+- `modify_peer_table(..., grant=...)` validates grants against the ceiling — you can restore revoked peers up to the ceiling, but never exceed it
+- `modify_peer_table(..., revoke=...)` always succeeds (subtraction is always valid)
+- Tables without a `parent` inherit directly from YAML `listener.peers`
 
 ### Thread Chain Encoding
 
@@ -544,13 +591,13 @@ pump.register("billing", billing_handler, BillingPayload, description="Billing")
 
 await pump.start()
 
-# Define privilege tiers
+# Define privilege tiers (subtract-only from listener.peers ceiling)
 pump.register_peer_table("premium", {
     "concierge": ["calculator", "search", "billing"],
 })
 pump.register_peer_table("basic", {
     "concierge": ["calculator"],
-})
+}, parent="premium")  # Ceiling is premium's peers, not YAML
 
 # Premium user — concierge can call all three tools
 await pump.inject("concierge", Request(query="Check my bill"),
@@ -564,6 +611,35 @@ await pump.inject("concierge", Request(query="What is 2+2?"),
 pump.modify_peer_table("premium", "concierge", revoke=["search"])
 ```
 
+### YAML Declaration
+
+Peer tables can be declared in `organism.yaml` for bootstrap-time registration:
+
+```yaml
+peer_tables:
+  - name: admin
+    entries:
+      - listener: concierge
+        peers: [calculator, search, billing]
+
+  - name: operator
+    parent: admin
+    entries:
+      - listener: concierge
+        peers: [calculator, search]
+
+  - name: viewer
+    parent: operator
+    entries:
+      - listener: concierge
+        peers: [calculator]
+```
+
+Tables are registered in topological order (parents before children) during `start()`.
+Circular parent chains are detected and rejected.
+
+See [Configuration](configuration.md#peer_tables) for full YAML reference.
+
 ### OOB Commands
 
 Peer tables can also be managed via the OOB privileged channel:
@@ -571,6 +647,7 @@ Peer tables can also be managed via the OOB privileged channel:
 ```xml
 <register-peer-table xmlns="https://xml-pipeline.org/privileged-msg">
   <name>premium</name>
+  <parent>admin</parent>
   <entries>
     <entry>
       <listener>concierge</listener>
