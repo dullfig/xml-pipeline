@@ -100,10 +100,19 @@ Pipelines run concurrently; messages within a single pipeline are processed sequ
 Handlers return `HandlerResponse` dataclass (not raw bytes). After dispatcher awaits a handler:
 
 ```python
-from xml_pipeline.message_bus.message_state import HandlerResponse
+from xml_pipeline.message_bus.message_state import HandlerResponse, TIMEOUT_ERROR
 
-# Dispatch to handler
-response = await handler(state.payload, metadata)
+# Dispatch to handler — wrapped in timeout enforcement
+try:
+    response = await asyncio.wait_for(
+        handler(state.payload, metadata),
+        timeout=listener.timeout,  # Default 30s, configurable per-listener
+    )
+except asyncio.TimeoutError:
+    # Emit error event, send SystemError back to caller, keep thread alive
+    emit_event(AgentStateEvent(agent_name=listener.name, state="error", thread_id=...))
+    await inject_system_error(state, TIMEOUT_ERROR)
+    return
 
 # Process response
 if response is None:
@@ -207,6 +216,32 @@ async def dispatcher(state: MessageState):
 7. Thread registry manages call chains — `.respond()` prunes, forward extends.
 8. `<huh>` guards protect against step failures; `<SystemError>` for routing violations.
 9. Extensibility: new steps (token counting, rate limiting, logging) insert anywhere in default list.
+10. Handler timeout enforced on every dispatch via `asyncio.wait_for()` — default 30s, configurable per-listener. Timeout sends `SystemError(code="timeout")` back; thread stays alive.
+11. Thread cleanup consolidates resource release: budget registry, todo watchers, background workers, and `ThreadEvent` emission — single code path for both `return None` and chain-exhausted termination.
+
+---
+
+### Thread Cleanup
+
+When a thread terminates (handler returns `None` or call chain is exhausted after `.respond()`),
+the pump calls `_cleanup_thread(thread_id)` which consolidates all resource release:
+
+```python
+def _cleanup_thread(self, thread_id: str) -> None:
+    # 1. Budget cleanup — release token tracking for this thread
+    budget_registry.cleanup_thread(thread_id)
+
+    # 2. Todo watcher cleanup — close all pending watchers
+    todo_registry.close_all_for_thread(thread_id)
+
+    # 3. Worker cleanup — stop all background processes for this thread
+    worker_registry.cleanup_for_thread(thread_id)
+
+    # 4. Emit thread completion event
+    emit_event(ThreadEvent(thread_id=thread_id, status="completed"))
+```
+
+This ensures consistent cleanup regardless of how the thread ended.
 
 ---
 

@@ -96,6 +96,9 @@ When a thread is pruned or terminated:
 |----------|------------------|
 | Thread UUID mapping | Removed from registry |
 | Context buffer slots | Slots for that thread are deleted |
+| Token budget | Released via `budget_registry.cleanup_thread()` |
+| Todo watchers | Closed via `todo_registry.close_all_for_thread()` |
+| Background workers | Stopped via `worker_registry.cleanup_for_thread()` |
 | In-flight messages | Completed or dropped (no orphans) |
 | Sub-thread branches | Automatically pruned (cascading) |
 
@@ -108,8 +111,9 @@ If `greeter` spawned `calculator` and `summarizer`, then responds to `router`, b
 | Event | Cleanup |
 |-------|---------|
 | `.respond()` | Current UUID cleaned; pruned chain used |
-| `return None` | Thread terminates; UUID can be cleaned |
-| Chain exhausted | Root reached; entire chain cleaned |
+| `return None` | Thread terminates; `_cleanup_thread()` called |
+| Chain exhausted | Root reached; `_cleanup_thread()` called |
+| Handler timeout | `SystemError` sent back; thread stays alive (no cleanup) |
 | Idle timeout | (Future) Stale threads garbage collected |
 
 ### Thread Privacy
@@ -172,6 +176,16 @@ Emitted when a handler tries to send to an unauthorized or unreachable target.
 <SystemError xmlns="">
   <code>routing</code>
   <message>Message could not be delivered. Please verify your target and try again.</message>
+  <retry-allowed>true</retry-allowed>
+</SystemError>
+```
+
+Emitted when a handler exceeds its configured timeout (default 30 seconds):
+
+```xml
+<SystemError xmlns="">
+  <code>timeout</code>
+  <message>Handler timed out. Please try again.</message>
   <retry-allowed>true</retry-allowed>
 </SystemError>
 ```

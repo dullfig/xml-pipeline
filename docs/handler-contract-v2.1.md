@@ -228,6 +228,106 @@ async def console_display(payload: ConsoleOutput, metadata: HandlerMetadata) -> 
     return None  # End of chain
 ```
 
+## Handler Timeout
+
+Every handler invocation is wrapped in `asyncio.wait_for()` with a configurable
+per-listener timeout (default 30 seconds).
+
+### Configuration
+
+```python
+# Programmatic — per listener
+pump.register("researcher", handler, ResearchPayload,
+              timeout=300)  # 5 minutes for LLM agents
+```
+
+```yaml
+# YAML — per listener
+listeners:
+  - name: researcher
+    timeout_seconds: 300
+```
+
+### Timeout Behavior
+
+When a handler exceeds its timeout:
+
+1. `asyncio.TimeoutError` is caught by the pump
+2. `AgentStateEvent(state="error")` is emitted
+3. `SystemError(code="timeout")` is sent back to the caller
+4. The thread stays alive — the agent can retry or adjust
+
+```xml
+<SystemError xmlns="">
+  <code>timeout</code>
+  <message>Handler timed out. Please try again.</message>
+  <retry-allowed>true</retry-allowed>
+</SystemError>
+```
+
+The timeout applies to both in-process handlers and process pool dispatch
+(`cpu_bound=True`).
+
+**Note:** Handlers cannot extend or disable their own timeout. The timeout is
+a system-level safety mechanism enforced by the pump.
+
+## Background Workers
+
+Handlers can spawn long-running background processes via the `WorkerRegistry`.
+Workers are thread-scoped — they are automatically stopped when the owning thread
+terminates.
+
+### Usage Pattern
+
+```python
+from xml_pipeline import get_worker_registry
+
+async def my_handler(payload, metadata):
+    registry = get_worker_registry()
+
+    # Spawn a background worker
+    worker_id = registry.spawn(
+        thread_id=metadata.thread_id,
+        listener_name=metadata.own_name,
+        target=long_running_task,
+        kwargs={"data": payload.data},
+    )
+
+    # Send messages to the worker
+    registry.send(worker_id, {"command": "start"})
+
+    # Check for results (non-blocking)
+    results = registry.receive(worker_id)
+
+    # Check worker health
+    status = registry.status(worker_id)
+    if not status.alive:
+        # Worker crashed — handle gracefully
+        ...
+```
+
+Workers use `multiprocessing.Process` with inbox/outbox `Queue` pairs. The worker
+function should read from inbox and write to outbox:
+
+```python
+def long_running_task(inbox, outbox, *, data=None):
+    while True:
+        msg = inbox.get()  # Blocks until message
+        if msg is None:    # Sentinel — graceful stop
+            break
+        result = process(msg, data)
+        outbox.put(result)
+```
+
+### Lifecycle
+
+- **spawn** — creates a new `multiprocessing.Process`
+- **stop** — sends `None` sentinel, then `join(timeout)`
+- **cleanup_for_thread** — stops all workers for a thread (called automatically on thread cleanup)
+- **shutdown_all** — stops all workers (called on pump shutdown)
+
+See [Public API](api.md#worker-registry) for the full `WorkerRegistry` API reference.
+
 ## Backwards Compatibility
 
 Legacy handlers returning `bytes` are still supported but deprecated:

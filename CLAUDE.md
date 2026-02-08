@@ -77,6 +77,7 @@ xml-pipeline/
 │   ├── prompts/              # System prompts (no_paperclippers, etc.)
 │   ├── schema/               # XSD schema files
 │   ├── tools/                # Native tools (files, shell, search, etc.)
+│   ├── workers/              # Background worker process registry
 │   ├── librarian/            # Premium Librarian (codebase intelligence)
 │   └── utils/                # Shared utilities
 ├── config/                   # Example organism configurations
@@ -132,6 +133,7 @@ AgentServer implements a stream-based message pump where all communication flows
 | UsageTracker | `xml_pipeline/llm/usage_tracker.py` | Production billing and gas usage metering |
 | PromptRegistry | `xml_pipeline/platform/prompt_registry.py` | Immutable system prompt storage |
 | ContextBuffer | `xml_pipeline/memory/context_buffer.py` | Conversation history per thread |
+| WorkerRegistry | `xml_pipeline/workers/registry.py` | Background worker process management |
 | PremiumLibrarian | `xml_pipeline/librarian/` | Codebase intelligence with RAG |
 
 ## Development Guidelines

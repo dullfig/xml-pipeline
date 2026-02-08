@@ -55,6 +55,7 @@ listeners:
     handler: agents.researcher.research_handler
     description: "Primary research agent that reasons and coordinates tools."
     agent: true                                 # LLM agent → unique root tag, own_name exposed
+    timeout_seconds: 300                        # Handler timeout (default 30s)
     peers:                                      # Allowed call targets
       - calculator.add
       - calculator.multiply
@@ -132,6 +133,7 @@ All bounded capabilities (tools and agents).
 - `agent: true`: Designates LLM-driven listener → enforces unique root tag, exposes `own_name` in HandlerMetadata.
 - `peers:`: List of registered names (or gateway groups) this listener is allowed to address. Enforced by pump for agents.
 - `broadcast: true`: Opt-in flag allowing multiple listeners to share the exact same derived root tag (used for parallel gateways).
+- `timeout_seconds`: Handler execution timeout in seconds (default `30`). On timeout, `SystemError(code="timeout")` is sent back to the caller; the thread stays alive. Use higher values for LLM agents that make external API calls.
 
 #### `gateways`
 Federation peers (trusted remote organisms).
@@ -233,5 +235,6 @@ See [Public API](api.md#peer-tables) for full reference.
 - Agents always have unique root tags (enforced automatically).
 - All structural changes after bootstrap require privileged OOB hot-reload.
 - Peer tables are runtime-only (not declared in YAML); managed via API or OOB commands.
+- Handler timeout is enforced via `asyncio.wait_for()` on every dispatch; default 30 seconds, configurable per-listener.
 
 This YAML is the organism's DNA — precise, auditable, minimal, and fully aligned with listener-class-v2.1.md.

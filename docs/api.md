@@ -26,6 +26,9 @@ from xml_pipeline import (
     AgentStateEvent,
     ThreadEvent,
     ReloadEvent,
+
+    # Workers
+    get_worker_registry,
 )
 ```
 
@@ -126,6 +129,7 @@ pump.register(
     broadcast: bool = False,
     prompt: str = "",
     cpu_bound: bool = False,
+    timeout: float = 30.0,
 ) -> Listener
 ```
 
@@ -143,6 +147,7 @@ and delegates to the existing `register_listener()` machinery.
 | `broadcast` | Allow multiple listeners to share the same root tag |
 | `prompt` | System prompt for LLM agents (loaded into PromptRegistry) |
 | `cpu_bound` | Dispatch to ProcessPoolExecutor instead of event loop |
+| `timeout` | Handler execution timeout in seconds (default 30). On timeout, `SystemError(code="timeout")` sent back to caller; thread stays alive |
 
 **Example:**
 
@@ -409,7 +414,7 @@ pump.subscribe_events(on_event)
 |-------|--------|------|
 | `MessageReceivedEvent` | `thread_id`, `from_id`, `to_id`, `payload_type`, `payload` | Handler receives a message |
 | `MessageSentEvent` | `thread_id`, `from_id`, `to_id`, `payload_type`, `payload` | Handler sends a response |
-| `AgentStateEvent` | `agent_name`, `state`, `thread_id` | Agent transitions: `"idle"`, `"processing"`, `"error"` |
+| `AgentStateEvent` | `agent_name`, `state`, `thread_id` | Agent transitions: `"idle"`, `"processing"`, `"error"` (includes timeout) |
 | `ThreadEvent` | `thread_id`, `status`, `participants`, `error` | Thread created/completed/killed |
 | `ReloadEvent` | `success`, `added_listeners`, `removed_listeners`, `updated_listeners`, `error` | Hot-reload |
 
@@ -592,6 +597,95 @@ static peers — so the LLM sees tool documentation matching its actual permissi
 
 ---
 
+## Worker Registry
+
+Background worker processes for long-running or CPU-bound tasks that outlive a single
+handler invocation. Workers are thread-scoped and automatically cleaned up when the
+thread terminates.
+
+### get_worker_registry()
+
+```python
+from xml_pipeline import get_worker_registry
+
+registry = get_worker_registry()
+```
+
+Returns the global `WorkerRegistry` singleton. The registry is also available on
+the pump as `pump._worker_registry` (internal).
+
+### WorkerRegistry API
+
+```python
+# Spawn a background worker process
+worker_id = registry.spawn(
+    thread_id: str,
+    listener_name: str,
+    target: Callable,
+    *,
+    kwargs: dict[str, Any] | None = None,
+) -> str
+
+# Send a message to the worker's inbox
+registry.send(worker_id: str, message: Any) -> None
+
+# Drain the worker's outbox (non-blocking)
+messages = registry.receive(worker_id: str) -> list[Any]
+
+# Get worker status snapshot
+status = registry.status(worker_id: str) -> WorkerStatus
+
+# Gracefully stop a worker
+registry.stop(worker_id: str, *, join_timeout: float = 5.0) -> None
+
+# Stop all workers for a thread (called automatically on thread cleanup)
+count = registry.cleanup_for_thread(thread_id: str, *, join_timeout: float = 5.0) -> int
+
+# Stop all workers (called on pump shutdown)
+count = registry.shutdown_all(*, join_timeout: float = 5.0) -> int
+```
+
+### WorkerStatus
+
+```python
+@dataclass
+class WorkerStatus:
+    worker_id: str
+    alive: bool
+    pid: int | None
+    uptime: float
+    listener_name: str
+    thread_id: str
+```
+
+### Usage in Handlers
+
+```python
+from xml_pipeline import get_worker_registry
+
+async def my_handler(payload, metadata):
+    registry = get_worker_registry()
+
+    # Spawn a background worker
+    worker_id = registry.spawn(
+        thread_id=metadata.thread_id,
+        listener_name=metadata.own_name,
+        target=long_running_task,
+        kwargs={"data": payload.data},
+    )
+
+    # Send work to it
+    registry.send(worker_id, {"command": "process"})
+
+    # Check for results later
+    results = registry.receive(worker_id)
+```
+
+Workers use `multiprocessing.Process` with inbox/outbox `Queue` pairs. Send `None`
+as a sentinel to signal graceful stop from the worker side.
+
+---
+
 ## What NOT to Import
 
 These are internal and may change without notice:
@@ -604,6 +698,7 @@ These are internal and may change without notice:
 | `pump._inject_raw()` | `pump.inject(target, payload)` |
 | `get_registry().initialize_root()` | `pump.start()` |
 | `get_registry().extend_chain()` | `pump.inject()` handles this |
+| `WorkerRegistry()` | `get_worker_registry()` |
 
 ---
 

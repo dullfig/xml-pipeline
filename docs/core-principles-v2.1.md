@@ -52,6 +52,7 @@ These principles are the single canonical source of truth for the project. All d
 - Validation failures inject `<huh>` error elements (LLM-friendly self-correction).
 - Message pump tracks token budgets per agent and thread, enforcing limits and preventing abuse. The LLM abstraction layer informs the message bus on actual token usage.
 - Message pump uses asynchronous non-blocking I/O for maximum throughput, with provisions for concurrency limits, fair scheduling, and backpressure.
+- Handler timeout enforced via `asyncio.wait_for()` on every dispatch. Default 30 seconds, configurable per-listener. On timeout: `SystemError(code="timeout")` sent back, thread stays alive, `AgentStateEvent(error)` emitted.
 
 ## Reasoning & Iteration
 - LLM agents iterate via blind self-calls: with unique root tags, emitting payloads using their own root tag automatically routes back to themselves—no `<to/>`, name knowledge, or special primitives required.
@@ -105,6 +106,7 @@ These principles are the single canonical source of truth for the project. All d
 ### Anti-Paperclip Guarantees
 - No persistent cross-thread memory (threads are ephemeral audit trails).
 - Token budgets per thread enforce computational bounds.
+- Handler timeout prevents infinite handler hangs (default 30s, configurable per-listener).
 - Thread pruning on delegation return prevents state accumulation.
 - All agent reasoning visible in message history (no hidden state machines).
 - "No Paperclippers" manifesto injected as first system message for every LLM-based listener.
@@ -142,8 +144,11 @@ These principles are the single canonical source of truth for the project. All d
 - Ensures isolation across conversations, automatic cleanup on idle, and minimal mutable state.
 - Handler closes over or receives UUID for access — still oblivious to readable path.
 
-## Resource Stewardship 
+## Resource Stewardship
 - The Message Pump ensures fair execution and prevents "Paperclip" runaway scenarios via Thread-Level Scheduling and Concurrency Controls. Every thread is subject to Token-Rate Monitoring and Fair-Share Queuing, ensuring that a high-volume agent cannot block high-priority events or starve simpler organs.
+- **Handler timeout** (default 30s, configurable per-listener) prevents infinite handler hangs. Timed-out handlers receive `SystemError(code="timeout")` — the thread stays alive so the agent can retry or adjust.
+- **Thread lifecycle cleanup** (`_cleanup_thread`) consolidates resource release when threads terminate: token budgets, todo watchers, background workers, and event emission — all in one path for both `return None` and chain-exhausted cases.
+- **Background workers** (`WorkerRegistry`) are scoped to threads and automatically stopped when their owning thread terminates. The pump calls `shutdown_all()` on graceful shutdown.
 
 These principles are now locked for v2.1. The Message Pump v2.1 specification remains the canonical detail for pump behavior. Future changes require explicit discussion and amendment here first.
 
