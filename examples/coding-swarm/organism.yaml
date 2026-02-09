@@ -1,0 +1,162 @@
+organism:
+  name: "CodingSwarm-01"
+  port: 8765
+
+max_concurrent_pipelines: 50
+max_concurrent_handlers: 20
+max_concurrent_per_agent: 5
+
+thread_scheduling: breadth-first
+
+llm:
+  strategy: failover
+  retries: 3
+  backends:
+    - provider: xai
+      api_key_env: XAI_API_KEY
+      rate_limit_tpm: 100000
+
+listeners:
+  # ── Coordinator (deterministic FSM, no LLM) ─────────────────────────────
+  - name: coordinator
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.coordinator.handle_coordinator
+    description: >
+      Deterministic state machine that orchestrates the coding workflow.
+      Routes messages between architect, coder, tester, reviewer, and
+      workspace tools. Does not call an LLM.
+    agent: true
+    timeout_seconds: 60
+    peers:
+      - architect
+      - coder
+      - tester
+      - reviewer
+      - workspace-read
+      - workspace-write
+      - build-run
+
+  # ── Architect (LLM agent) ───────────────────────────────────────────────
+  - name: architect
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.architect.handle_architect
+    description: >
+      Designs WIT (WebAssembly Interface Type) interface definitions
+      for WASM tools based on requirements.
+    agent: true
+    timeout_seconds: 120
+    peers: []
+    prompt: |
+      You are a WIT interface architect. Given tool requirements, you design
+      precise WIT interface definitions for WebAssembly Component Model tools.
+
+      Rules:
+      - Each interface must define exactly one *-request record and one *-response record
+      - Field types: string, u32, s32, u64, s64, f32, f64, bool, option<T>, list<T>
+      - Keep interfaces minimal — only expose what the tool needs
+      - Include doc comments for each field
+      - Use kebab-case for interface and function names
+      - Use kebab-case for record field names
+
+      Respond with ONLY the WIT definition, no explanation or markdown fencing.
+
+  # ── Coder (LLM agent) ──────────────────────────────────────────────────
+  - name: coder
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.coder.handle_coder
+    description: >
+      Writes AssemblyScript implementations of WASM tools that conform
+      to the WIT interface designed by the architect.
+    agent: true
+    timeout_seconds: 120
+    peers: []
+    prompt: |
+      You are an AssemblyScript developer. Given a WIT interface and requirements,
+      you write the AssemblyScript implementation.
+
+      Rules:
+      - Import types from the generated bindings
+      - Implement all exported functions defined in the WIT
+      - Handle errors gracefully — never panic, return error status in response
+      - Use AssemblyScript idioms (no raw memory unless necessary)
+      - Keep code clean and well-structured
+      - If previous code failed, fix the specific issues noted in the error
+
+      Respond with ONLY the AssemblyScript source code, no explanation or markdown fencing.
+
+  # ── Tester (LLM agent) ─────────────────────────────────────────────────
+  - name: tester
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.tester.handle_tester
+    description: >
+      Writes pytest test cases that validate the WASM tool implementation
+      against its WIT interface contract.
+    agent: true
+    timeout_seconds: 120
+    peers: []
+    prompt: |
+      You are a test engineer. Given a WIT interface and AssemblyScript source,
+      you write comprehensive pytest test cases.
+
+      Rules:
+      - Use pytest with pytest-asyncio where needed
+      - Test happy path, edge cases, and error conditions
+      - Test all exported functions from the WIT
+      - Use descriptive test names: test_<function>_<scenario>
+      - Keep tests independent (no shared state between tests)
+      - Mock the WASM runtime — test the logic, not the runtime
+
+      Respond with ONLY the pytest code, no explanation or markdown fencing.
+
+  # ── Reviewer (LLM agent) ───────────────────────────────────────────────
+  - name: reviewer
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.reviewer.handle_reviewer
+    description: >
+      Reviews code quality of the WASM tool implementation and tests.
+      Approves or rejects with feedback.
+    agent: true
+    timeout_seconds: 120
+    peers: []
+    prompt: |
+      You are a senior code reviewer. Given a WIT interface, AssemblyScript
+      implementation, and test suite, you review for quality.
+
+      Checklist:
+      - WIT contract fully implemented (all exports present)
+      - Error handling in place (no unhandled exceptions)
+      - No security issues (no arbitrary code execution, no path traversal)
+      - Tests cover happy path and at least one error case
+      - Code is readable and follows AssemblyScript conventions
+
+      If ALL checks pass, respond with: APPROVED
+      If ANY check fails, respond with: REJECTED followed by specific feedback
+      on what needs to change.
+
+  # ── Workspace Read (tool) ──────────────────────────────────────────────
+  - name: workspace-read
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.tools.handle_workspace_read
+    description: >
+      Read files from the sandboxed workspace directory.
+      Content format: path:relative/file.ext
+    agent: false
+
+  # ── Workspace Write (tool) ─────────────────────────────────────────────
+  - name: workspace-write
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.tools.handle_workspace_write
+    description: >
+      Write files to the sandboxed workspace directory.
+      Content format: path:relative/file.ext followed by file content.
+    agent: false
+
+  # ── Build Run (tool) ───────────────────────────────────────────────────
+  - name: build-run
+    payload_class: handlers.coding_swarm.payloads.SwarmMessage
+    handler: handlers.coding_swarm.tools.handle_build_run
+    description: >
+      Execute whitelisted build commands in the workspace directory.
+      Allowed: asc, npm, npx, node, pytest. Timeout: 60s.
+    agent: false
+    timeout_seconds: 90
