@@ -90,6 +90,51 @@ async def calculate(expression: str) -> ToolResult:
 
 ---
 
+### console_notify
+
+Print a message to the console (fire-and-forget).
+
+```
+Tool: console_notify
+Inputs:
+  - source (string) - Who is reporting (agent name or label)
+  - text (string) - The message to display
+  - level (string, optional) - "info", "warn", "error", "success" (default: info)
+
+Returns:
+  - (none) — fire-and-forget
+
+Examples:
+- console_notify("greeter", "Hello!", "info")
+- console_notify("monitor", "Disk full", "error")
+```
+
+**Backend:** Pluggable via `set_console_backend()`. Default: `StdioBackend` (ANSI-colored stdout).
+
+---
+
+### console_prompt
+
+Print a message and wait for user input.
+
+```
+Tool: console_prompt
+Inputs:
+  - source (string) - Who is asking
+  - text (string) - The prompt question
+
+Returns:
+  - (string) — the user's input
+
+Examples:
+- console_prompt("greeter", "What is your name?")
+- console_prompt("setup", "Enter API key:")
+```
+
+**Backend:** Uses the same pluggable `ConsoleBackend`. Default `StdioBackend` reads from stdin via executor.
+
+---
+
 ### fetch_url
 
 Retrieve content from a URL.
