@@ -182,7 +182,7 @@ class ContextBuffer:
     2. Shared mode: Uses SharedBackend (Redis, Manager) for cross-process access
 
     In shared mode, slots are serialized via pickle and stored in the backend.
-    This enables multi-process handler dispatch (cpu_bound handlers).
+    This enables cross-process state sharing for distributed deployments.
     """
 
     def __init__(self, backend: Optional[SharedBackend] = None):

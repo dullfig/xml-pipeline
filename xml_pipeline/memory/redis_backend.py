@@ -2,10 +2,9 @@
 redis_backend.py — Redis implementation of SharedBackend.
 
 Uses Redis for distributed shared state, enabling:
-- Multi-process handler dispatch (cpu_bound handlers in ProcessPool)
 - Multi-tenant deployments (key prefix isolation)
 - Automatic TTL-based garbage collection
-- Cross-machine state sharing (future: WASM handlers)
+- Cross-machine state sharing
 
 Key schema:
 - Buffer slots: `{prefix}buffer:{thread_id}` → Redis LIST of pickled slots

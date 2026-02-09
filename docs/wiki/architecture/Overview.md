@@ -237,9 +237,9 @@ See [[Writing Handlers]] for usage details.
 - Access other handlers' state
 - See which peer table governs their thread
 
-## Multiprocess Architecture
+## Dispatch Architecture
 
-For CPU-bound handlers:
+Handler dispatch paths:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -248,25 +248,19 @@ For CPU-bound handlers:
 │  - Routing decisions                                            │
 │  - Response re-injection                                        │
 └───────────────────────────┬─────────────────────────────────────┘
-                            │ UUID + handler_path (minimal IPC)
+                            │
               ┌─────────────┼─────────────┐
               ▼             ▼             ▼
 ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
-│ Python Async    │ │ ProcessPool │ │ (Future: WASM)  │
-│ (main process)  │ │ (N workers) │ │                 │
-│ - Default mode  │ │ - cpu_bound │ │                 │
-└────────┬────────┘ └──────┬──────┘ └────────┬────────┘
-         │                 │                  │
-         └─────────────────┼──────────────────┘
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Shared Backend (Redis / Manager / Memory)                      │
-│  - Context buffer slots                                         │
-│  - Thread registry mappings                                     │
-└─────────────────────────────────────────────────────────────────┘
+│ Python Async    │ │ WASM Tools  │ │ Background      │
+│ (event loop)    │ │ (wasmtime   │ │ Workers         │
+│ - Default mode  │ │  + threads) │ │ (WorkerRegistry)│
+└─────────────────┘ └─────────────┘ └─────────────────┘
 ```
 
-See [[Shared Backend]] for details.
+- **Python Async**: Default path — handler runs as async coroutine in the event loop
+- **WASM Tools**: Foreign code in wasmtime sandboxes, dispatched via `asyncio.to_thread()` with epoch interruption for timeout enforcement
+- **Background Workers**: Long-running processes via `WorkerRegistry` (thread-scoped, auto-cleanup)
 
 ## See Also
 

@@ -4,22 +4,7 @@ The Shared Backend enables cross-process state sharing for multiprocess deployme
 
 ## Overview
 
-By default, xml-pipeline uses in-memory storage (single process). For CPU-bound handlers running in separate processes, you need shared state:
-
-```
-┌────────────────────┐     ┌────────────────────┐
-│   Main Process     │     │  Worker Process    │
-│   (StreamPump)     │     │  (cpu_bound)       │
-└─────────┬──────────┘     └──────────┬─────────┘
-          │                           │
-          └───────────┬───────────────┘
-                      │
-                      ▼
-          ┌─────────────────────┐
-          │   Shared Backend    │
-          │  (Redis/Manager)    │
-          └─────────────────────┘
-```
+By default, xml-pipeline uses in-memory storage (single process). For distributed deployments or persistent state, configure a shared backend:
 
 ## Backend Types
 
@@ -37,22 +22,6 @@ backend = get_shared_backend(config)
 **Use when:**
 - Single process deployment
 - Development/testing
-- No CPU-bound handlers
-
-### ManagerBackend
-
-Uses `multiprocessing.Manager` for local multi-process sharing.
-
-```python
-config = BackendConfig(backend_type="manager")
-backend = get_shared_backend(config)
-```
-
-**Use when:**
-- Local deployment with CPU-bound handlers
-- No Redis available
-- Single machine, multiple processes
-
 ### RedisBackend
 
 Distributed storage with TTL-based auto-cleanup.
@@ -230,35 +199,6 @@ The pump automatically uses the configured backend:
 backend:
   type: redis
   redis_url: "redis://localhost:6379"
-
-process_pool:
-  workers: 4
-
-listeners:
-  - name: analyzer
-    cpu_bound: true  # Uses shared backend for data exchange
-```
-
-## Worker Data Flow
-
-For CPU-bound handlers, data flows through the backend:
-
-```
-1. Main Process
-   ├── Serialize payload + metadata
-   ├── Store in backend (payload_uuid, metadata_uuid)
-   └── Submit WorkerTask to ProcessPool
-
-2. Worker Process
-   ├── Fetch payload + metadata from backend
-   ├── Execute handler
-   ├── Store response in backend (response_uuid)
-   └── Return WorkerResult
-
-3. Main Process
-   ├── Fetch response from backend
-   ├── Clean up temporary data
-   └── Process response normally
 ```
 
 ## TTL and Cleanup

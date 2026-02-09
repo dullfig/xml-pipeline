@@ -9,20 +9,12 @@ The pipeline is just a composition of stream operators.
 
 Dependencies:
     pip install aiostream
-
-CPU-Bound Handlers:
-    Handlers marked with `cpu_bound: true` are dispatched to a
-    ProcessPoolExecutor instead of running in the main event loop.
-    This prevents long-running handlers from blocking other messages.
-
-    Requires shared backend (Redis or Manager) for cross-process data access.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from concurrent.futures import ProcessPoolExecutor
 from typing import AsyncIterable, Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -80,10 +72,6 @@ class StreamPump:
 
     The entire flow is a single composable stream pipeline.
     Fan-out is natural via flatmap. Concurrency is controlled via task_limit.
-
-    CPU-bound handlers can be dispatched to a ProcessPoolExecutor by
-    marking them with `cpu_bound: true` in config. This requires a
-    shared backend (Redis or Manager) for cross-process data access.
     """
 
     def __init__(
@@ -149,17 +137,6 @@ class StreamPump:
 
         # Event hooks for external observers (ServerState, etc.)
         self._event_callbacks: List[EventCallback] = []
-
-        # Process pool for cpu_bound handlers
-        self._process_pool: Optional[ProcessPoolExecutor] = None
-        if config.process_pool_enabled:
-            self._process_pool = ProcessPoolExecutor(
-                max_workers=config.process_pool_workers,
-                max_tasks_per_child=config.process_pool_max_tasks_per_child,
-            )
-            pump_logger.info(
-                f"ProcessPool initialized: {config.process_pool_workers} workers"
-            )
 
         # OOB server (started in start(), stopped in shutdown())
         self._oob_server: Any = None
@@ -282,8 +259,6 @@ class StreamPump:
             is_agent=lc.is_agent,
             peers=lc.peers,
             broadcast=lc.broadcast,
-            cpu_bound=lc.cpu_bound,
-            handler_path=lc.handler_path,  # For worker process import
             timeout=lc.timeout,
             schema=self._generate_schema(lc.payload_class),
             root_tag=root_tag,
@@ -309,7 +284,6 @@ class StreamPump:
         peers: List[str] | None = None,
         broadcast: bool = False,
         prompt: str = "",
-        cpu_bound: bool = False,
         timeout: float = 30.0,
     ) -> Listener:
         """
@@ -328,7 +302,6 @@ class StreamPump:
             peers: Allowed call targets for agents
             broadcast: Allow multiple listeners to share root tag
             prompt: System prompt for LLM agents
-            cpu_bound: Dispatch to ProcessPoolExecutor
             timeout: Handler execution timeout in seconds (default 30)
 
         Returns:
@@ -347,7 +320,6 @@ class StreamPump:
             peers=peers or [],
             broadcast=broadcast,
             prompt=prompt,
-            cpu_bound=cpu_bound,
             timeout=timeout,
             payload_class=payload_class,
             handler=handler,
@@ -1028,23 +1000,12 @@ class StreamPump:
                         payload=payload_ref,
                     ))
 
-                    # Dispatch to handler - either in-process or via ProcessPool
-                    # Wrap in wait_for to enforce per-listener timeout
+                    # Dispatch to handler with per-listener timeout
                     try:
-                        if listener.cpu_bound and self._process_pool and self._shared_backend:
-                            response = await asyncio.wait_for(
-                                self._dispatch_to_process_pool(
-                                    listener=listener,
-                                    payload=payload_ref,
-                                    metadata=metadata,
-                                ),
-                                timeout=listener.timeout,
-                            )
-                        else:
-                            response = await asyncio.wait_for(
-                                listener.handler(payload_ref, metadata),
-                                timeout=listener.timeout,
-                            )
+                        response = await asyncio.wait_for(
+                            listener.handler(payload_ref, metadata),
+                            timeout=listener.timeout,
+                        )
                     except asyncio.TimeoutError:
                         pump_logger.error(
                             f"Handler {listener.name} timed out after {listener.timeout}s"
@@ -1246,94 +1207,6 @@ class StreamPump:
                 # Fall through to unsigned
 
         return envelope_str.encode('utf-8')
-
-    async def _dispatch_to_process_pool(
-        self,
-        listener: Listener,
-        payload: Any,
-        metadata: HandlerMetadata,
-    ) -> Optional[HandlerResponse]:
-        """
-        Dispatch handler to ProcessPoolExecutor for CPU-bound execution.
-
-        This offloads work to a separate process to avoid blocking
-        the main event loop.
-
-        Args:
-            listener: The target listener
-            payload: The @xmlify dataclass payload
-            metadata: Handler metadata
-
-        Returns:
-            HandlerResponse or None (same as direct handler call)
-        """
-        from xml_pipeline.message_bus.worker import (
-            WorkerTask,
-            store_task_data,
-            fetch_response,
-            cleanup_task_data,
-            execute_handler,
-        )
-
-        assert self._process_pool is not None
-        assert self._shared_backend is not None
-
-        # Store payload and metadata in shared backend
-        payload_uuid, metadata_uuid = store_task_data(
-            self._shared_backend, payload, metadata
-        )
-
-        # Create worker task
-        task = WorkerTask(
-            thread_uuid=metadata.thread_id,
-            payload_uuid=payload_uuid,
-            handler_path=listener.handler_path,
-            metadata_uuid=metadata_uuid,
-            listener_name=listener.name,
-            is_agent=listener.is_agent,
-            peers=list(listener.peers),
-        )
-
-        # Backend config for worker process
-        backend_config = {
-            "backend_type": self.config.backend_type,
-            "redis_url": self.config.backend_redis_url,
-            "redis_prefix": self.config.backend_redis_prefix,
-        }
-
-        try:
-            # Submit to process pool and await result
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                self._process_pool,
-                execute_handler,
-                task,
-                backend_config,
-            )
-
-            if not result.success:
-                pump_logger.error(
-                    f"Worker error for {listener.name}: {result.error}"
-                )
-                if result.error_traceback:
-                    pump_logger.debug(f"Traceback: {result.error_traceback}")
-                return None
-
-            # Fetch response from shared backend
-            if result.response_uuid:
-                response = fetch_response(self._shared_backend, result.response_uuid)
-                return response
-
-            return None
-
-        finally:
-            # Clean up task data from backend
-            cleanup_task_data(
-                self._shared_backend,
-                payload_uuid,
-                metadata_uuid,
-                result.response_uuid if 'result' in dir() and result.success else None,
-            )
 
     async def _reinject_responses(self, state: MessageState) -> None:
         """Push handler responses back into the queue for next iteration."""
@@ -1605,12 +1478,6 @@ class StreamPump:
         if self._worker_registry:
             self._worker_registry.shutdown_all()
 
-        # Shutdown process pool if active
-        if self._process_pool:
-            self._process_pool.shutdown(wait=True)
-            pump_logger.info("ProcessPool shutdown complete")
-            self._process_pool = None
-
     def reload_config(self, config_path: Optional[str] = None) -> ReloadEvent:
         """
         Hot-reload organism configuration.
@@ -1719,8 +1586,6 @@ class StreamPump:
         if set(existing.peers) != set(new_config.peers):
             return True
         if existing.broadcast != new_config.broadcast:
-            return True
-        if existing.cpu_bound != new_config.cpu_bound:
             return True
         return False
 

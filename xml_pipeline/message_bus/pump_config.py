@@ -26,7 +26,6 @@ class ListenerConfig:
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
     prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
-    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
     timeout: float = 30.0  # Handler execution timeout in seconds
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
@@ -50,11 +49,6 @@ class OrganismConfig:
 
     # LLM configuration (optional)
     llm_config: Dict[str, Any] = field(default_factory=dict)
-
-    # Process pool configuration (for cpu_bound handlers)
-    process_pool_workers: int = 4
-    process_pool_max_tasks_per_child: int = 100
-    process_pool_enabled: bool = False
 
     # Backend configuration (for shared state)
     backend_type: str = "memory"  # "memory", "manager", "redis"
@@ -83,11 +77,6 @@ class OrganismConfig:
     #         "capabilities": list, "memory_limit_mb": int, "timeout_seconds": float}
     wasm_tool_configs: List[Dict[str, Any]] = field(default_factory=list)
 
-    # WASM tool configs from YAML
-    # Each: {"name": str, "wasm_path": str, "wit_path": str, "description": str,
-    #         "capabilities": list, "memory_limit_mb": int, "timeout_seconds": float}
-    wasm_tool_configs: List[Dict[str, Any]] = field(default_factory=list)
-
 
 @dataclass
 class Listener:
@@ -98,8 +87,6 @@ class Listener:
     is_agent: bool = False
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
-    cpu_bound: bool = False  # Dispatch to ProcessPoolExecutor if True
-    handler_path: str = ""  # Import path for worker process
     timeout: float = 30.0  # Handler execution timeout in seconds
     schema: etree.XMLSchema = field(default=None, repr=False)
     root_tag: str = ""

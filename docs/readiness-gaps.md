@@ -29,9 +29,9 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 | Handler timeout (`asyncio.wait_for`, per-listener) | READY | 6 | Default 30s, configurable |
 | Thread lifecycle cleanup (`_cleanup_thread`) | READY | 4 | Budgets, todos, workers, events |
 | Concurrency controls (per-agent semaphore + global task_limit) | READY | yes | aiostream `task_limit` |
-| Process pool dispatch (`cpu_bound=True`) | IMPL | 0 | Requires shared backend config |
-| Pipeline-per-listener architecture | MISMATCH | — | Docs say per-listener; code is single unified pipeline |
-| Thread scheduling (breadth-first / depth-first) | MISSING | 0 | Config field parsed; `scheduler.py` empty; queue is plain FIFO |
+| Process pool dispatch (`cpu_bound=True`) | REJECTED | — | Removed — use `asyncio.to_thread()` (WASM), worker registry (background), or async handlers |
+| Pipeline-per-listener architecture | REJECTED | — | Unified pipeline is intentional — re-injection ensures tamper-proof envelopes, consistent events, and per-hop peer enforcement on every message |
+| Thread scheduling (breadth-first / depth-first) | REJECTED | 0 | FIFO + async concurrency is sufficient; depth-first optimization deferred to if queue contention is observed in production |
 | Fair-share queuing / backpressure | MISSING | 0 | Docs claim "Token-Rate Monitoring and Fair-Share Queuing"; not implemented |
 
 ---

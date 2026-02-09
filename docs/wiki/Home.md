@@ -23,8 +23,7 @@ See [[Why XML]] for the full rationale.
 | **Handler Isolation** | Handlers are sandboxed—cannot forge identity or escape threads |
 | **Thread Tracking** | Opaque UUIDs hide topology; call chains tracked privately |
 | **LLM Router** | Multi-backend routing with failover, rate limiting, retries |
-| **Multiprocess Ready** | CPU-bound handlers run in ProcessPoolExecutor |
-| **Shared State** | Redis/Manager backends for distributed deployments |
+| **WASM Sandboxing** | Foreign code runs in wasmtime with epoch interruption |
 | **OOB Channel** | Privileged localhost-only control plane for hot-reload |
 | **Peer Tables** | Thread-scoped privilege tiers (e.g., premium/basic) |
 

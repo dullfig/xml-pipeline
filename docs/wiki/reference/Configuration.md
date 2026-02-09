@@ -94,14 +94,6 @@ backend:
   redis_ttl: 86400                 # TTL in seconds (24 hours)
 
 # ============================================================
-# PROCESS POOL SECTION (Optional)
-# Worker processes for CPU-bound handlers
-# ============================================================
-process_pool:
-  workers: 4                       # Number of worker processes
-  max_tasks_per_child: 100         # Restart workers after N tasks
-
-# ============================================================
 # LISTENERS SECTION
 # Message handlers (tools and agents)
 # ============================================================
@@ -124,13 +116,6 @@ listeners:
     prompt: |                      # System prompt for LLM
       You are a research assistant.
       Use tools to find information.
-
-  # CPU-bound handler (runs in process pool)
-  - name: librarian
-    payload_class: handlers.librarian.Query
-    handler: handlers.librarian.handle_query
-    description: "Document analysis with heavy computation"
-    cpu_bound: true                # Dispatch to ProcessPoolExecutor
 
 # ============================================================
 # GATEWAYS SECTION (Optional)
@@ -207,7 +192,6 @@ The OOB channel provides a localhost-only privileged control plane for hot-reloa
 | `agent` | bool | No | Is this an LLM agent? (default: false) |
 | `peers` | list | No | Allowed call targets for agents |
 | `prompt` | string | No | System prompt for LLM agents |
-| `cpu_bound` | bool | No | Run in ProcessPoolExecutor (default: false) |
 | `broadcast` | bool | No | Allow shared root tag (default: false) |
 
 ### backend
@@ -218,13 +202,6 @@ The OOB channel provides a localhost-only privileged control plane for hot-reloa
 | `redis_url` | string | If redis | Redis connection URL |
 | `redis_prefix` | string | No | Key prefix (default: `xp:`) |
 | `redis_ttl` | int | No | Key TTL in seconds |
-
-### process_pool
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `workers` | int | No | Number of worker processes (default: CPU count) |
-| `max_tasks_per_child` | int | No | Tasks before worker restart |
 
 ## Environment Variables
 

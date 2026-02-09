@@ -61,6 +61,9 @@ class WasmModule:
 
         store = wasmtime.Store(self.engine)
 
+        # Set epoch deadline for cooperative interruption
+        store.set_epoch_deadline(1)
+
         # Apply memory limit
         if self.config:
             limit_bytes = self.config.memory_limit_mb * 1024 * 1024
@@ -131,7 +134,10 @@ def load_wasm_module(config: WasmToolConfig) -> WasmModule:
     if not wasm_path.exists():
         raise WasmValidationError(f"WASM file not found: {wasm_path}")
 
-    engine = wasmtime.Engine()
+    # Enable epoch interruption for cooperative timeout enforcement
+    engine_config = wasmtime.Config()
+    engine_config.epoch_interruption = True
+    engine = wasmtime.Engine(engine_config)
     module = wasmtime.Module.from_file(engine, str(wasm_path))
 
     # Validate exports

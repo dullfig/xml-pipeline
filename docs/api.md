@@ -128,7 +128,6 @@ pump.register(
     peers: list[str] | None = None,
     broadcast: bool = False,
     prompt: str = "",
-    cpu_bound: bool = False,
     timeout: float = 30.0,
 ) -> Listener
 ```
@@ -146,7 +145,6 @@ and delegates to the existing `register_listener()` machinery.
 | `peers` | Allowed call targets for agents (enforced by pump) |
 | `broadcast` | Allow multiple listeners to share the same root tag |
 | `prompt` | System prompt for LLM agents (loaded into PromptRegistry) |
-| `cpu_bound` | Dispatch to ProcessPoolExecutor instead of event loop |
 | `timeout` | Handler execution timeout in seconds (default 30). On timeout, `SystemError(code="timeout")` sent back to caller; thread stays alive |
 
 **Example:**
@@ -259,7 +257,7 @@ boot message from `start()`) are processed immediately.
 await pump.shutdown() -> None
 ```
 
-Graceful shutdown — drains the message queue and closes resources (process pool, etc.).
+Graceful shutdown — drains the message queue and closes resources.
 
 ### register_peer_table()
 

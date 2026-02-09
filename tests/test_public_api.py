@@ -197,15 +197,14 @@ class TestStreamPumpRegister:
 
         assert "my-tool.samplepayload" in pump.routing_table
 
-    def test_register_derives_import_paths(self):
+    def test_register_derives_root_tag(self):
         from xml_pipeline import StreamPump
         pump = StreamPump(name="test")
         listener = pump.register("my-tool", _noop_handler, SamplePayload,
                                  description="Test")
 
-        # The handler_path should be derived from the function's module/qualname
-        assert "_noop_handler" in listener.handler_path
-        assert "SamplePayload" in listener.root_tag.replace("samplepayload", "SamplePayload") or True
+        # Root tag is derived from name + dataclass name
+        assert listener.root_tag == "my-tool.samplepayload"
 
 
 # ============================================================================

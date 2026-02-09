@@ -267,8 +267,7 @@ When a handler exceeds its timeout:
 </SystemError>
 ```
 
-The timeout applies to both in-process handlers and process pool dispatch
-(`cpu_bound=True`).
+The timeout applies to all handler dispatch paths.
 
 **Note:** Handlers cannot extend or disable their own timeout. The timeout is
 a system-level safety mechanism enforced by the pump.

@@ -58,7 +58,7 @@ await pump.shutdown()
               ▼                ▼                ▼
     ┌─────────────────┐ ┌─────────────┐ ┌─────────────────┐
     │   Handler A     │ │  Handler B  │ │   Handler C     │
-    │  (async/main)   │ │ (cpu_bound) │ │   (async)       │
+    │   (async)       │ │   (async)   │ │   (WASM)        │
     └────────┬────────┘ └──────┬──────┘ └────────┬────────┘
              │                 │                  │
              └─────────────────┼──────────────────┘
@@ -231,35 +231,6 @@ async def _dispatch_async(state, listener):
     await self._process_response(response, listener, state)
 ```
 
-### CPU-Bound Handlers
-
-Dispatched to ProcessPoolExecutor:
-
-```python
-async def _dispatch_to_process_pool(state, listener):
-    # Store data in shared backend
-    payload_uuid, metadata_uuid = store_task_data(
-        self._backend, state.payload, metadata
-    )
-
-    # Submit to pool
-    task = WorkerTask(
-        thread_uuid=state.thread_id,
-        payload_uuid=payload_uuid,
-        handler_path=listener.handler_path,
-        metadata_uuid=metadata_uuid,
-    )
-
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        self._process_pool, execute_handler, task
-    )
-
-    # Fetch response from backend
-    response = fetch_response(self._backend, result.response_uuid)
-    await self._process_response(response, listener, state)
-```
-
 ## Response Processing
 
 When a handler returns `HandlerResponse`:
@@ -337,18 +308,6 @@ await pump.inject("greeter", Greeting(name="Alice"))
 
 # Shutdown (graceful)
 await pump.shutdown()
-```
-
-## Configuration
-
-```yaml
-process_pool:
-  workers: 4
-  max_tasks_per_child: 100
-
-backend:
-  type: redis
-  redis_url: "redis://localhost:6379"
 ```
 
 ## See Also

@@ -65,9 +65,6 @@ class ListenerConfig:
     allowed_tools: list[str] = field(default_factory=list)
     blocked_tools: list[str] = field(default_factory=list)
 
-    # Dispatch mode
-    cpu_bound: bool = False  # If True, dispatch to ProcessPoolExecutor
-
 
 @dataclass
 class ServerConfig:
@@ -108,21 +105,6 @@ class BackendStorageConfig:
 
 
 @dataclass
-class ProcessPoolConfig:
-    """
-    Process pool configuration for CPU-bound handler dispatch.
-
-    When configured, handlers marked with `cpu_bound: true` are
-    dispatched to a ProcessPoolExecutor instead of running in
-    the main event loop.
-    """
-
-    enabled: bool = False
-    workers: int = 4  # Number of worker processes
-    max_tasks_per_child: int = 100  # Restart workers after N tasks
-
-
-@dataclass
 class OrganismConfig:
     """Complete organism configuration."""
 
@@ -132,7 +114,6 @@ class OrganismConfig:
     server: ServerConfig | None = None
     auth: AuthConfig | None = None
     backend: BackendStorageConfig | None = None
-    process_pool: ProcessPoolConfig | None = None
 
 
 def load_config(path: Path) -> OrganismConfig:
@@ -193,7 +174,6 @@ def load_config(path: Path) -> OrganismConfig:
                 peers=listener_raw.get("peers", []),
                 allowed_tools=listener_raw.get("allowed_tools", []),
                 blocked_tools=listener_raw.get("blocked_tools", []),
-                cpu_bound=listener_raw.get("cpu_bound", False),
             )
         )
 
@@ -229,16 +209,6 @@ def load_config(path: Path) -> OrganismConfig:
             max_threads=backend_raw.get("max_threads", 1000),
         )
 
-    # Parse optional process pool config
-    process_pool = None
-    if "process_pool" in raw:
-        pool_raw = raw["process_pool"]
-        process_pool = ProcessPoolConfig(
-            enabled=pool_raw.get("enabled", True),
-            workers=pool_raw.get("workers", 4),
-            max_tasks_per_child=pool_raw.get("max_tasks_per_child", 100),
-        )
-
     return OrganismConfig(
         organism=organism,
         listeners=listeners,
@@ -246,7 +216,6 @@ def load_config(path: Path) -> OrganismConfig:
         server=server,
         auth=auth,
         backend=backend,
-        process_pool=process_pool,
     )
 
 

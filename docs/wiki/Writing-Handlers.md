@@ -272,21 +272,6 @@ listeners:
 
 The `description` is important—it's used in auto-generated tool prompts for LLM agents.
 
-## CPU-Bound Handlers
-
-For computationally expensive handlers, mark them as `cpu_bound`:
-
-```yaml
-listeners:
-  - name: analyzer
-    payload_class: handlers.analyze.AnalyzePayload
-    handler: handlers.analyze.analyze_handler
-    description: "Heavy document analysis"
-    cpu_bound: true
-```
-
-These run in a separate process pool to avoid blocking the event loop.
-
 ## Peer Tables
 
 By default, agents can only call peers declared in their `peers` list at registration time. **Peer tables** allow overriding this per-thread, enabling different privilege tiers (e.g., premium vs basic users).

@@ -27,12 +27,6 @@ class ConfigLoader:
     def _parse(cls, raw: dict) -> OrganismConfig:
         org = raw.get("organism", {})
 
-        # Parse process pool config
-        pool = raw.get("process_pool", {})
-        process_pool_enabled = pool.get("enabled", False) if pool else False
-        process_pool_workers = pool.get("workers", 4) if pool else 4
-        process_pool_max_tasks = pool.get("max_tasks_per_child", 100) if pool else 100
-
         # Parse backend config
         backend = raw.get("backend", {})
         backend_type = backend.get("type", "memory") if backend else "memory"
@@ -92,19 +86,6 @@ class ConfigLoader:
                 "timeout_seconds": float(tool_raw.get("timeout_seconds", 5.0)),
             })
 
-        # Parse WASM tool configs
-        wasm_tool_configs: List[Dict[str, Any]] = []
-        for tool_raw in raw.get("tools", []):
-            wasm_tool_configs.append({
-                "name": tool_raw["name"],
-                "wasm_path": tool_raw["wasm_path"],
-                "wit_path": tool_raw["wit_path"],
-                "description": tool_raw.get("description", ""),
-                "capabilities": tool_raw.get("capabilities", []),
-                "memory_limit_mb": tool_raw.get("memory_limit_mb", 64),
-                "timeout_seconds": float(tool_raw.get("timeout_seconds", 5.0)),
-            })
-
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -115,9 +96,6 @@ class ConfigLoader:
             max_concurrent_per_agent=raw.get("max_concurrent_per_agent", 5),
             max_tokens_per_thread=raw.get("max_tokens_per_thread", 100_000),
             llm_config=raw.get("llm", {}),
-            process_pool_enabled=process_pool_enabled,
-            process_pool_workers=process_pool_workers,
-            process_pool_max_tasks_per_child=process_pool_max_tasks,
             backend_type=backend_type,
             backend_redis_url=backend_redis_url,
             backend_redis_prefix=backend_redis_prefix,
@@ -149,7 +127,6 @@ class ConfigLoader:
             peers=raw.get("peers", []),
             broadcast=raw.get("broadcast", False),
             prompt=raw.get("prompt", ""),
-            cpu_bound=raw.get("cpu_bound", False),
             timeout=float(raw.get("timeout_seconds", 30.0)),
         )
 

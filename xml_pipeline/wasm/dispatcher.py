@@ -168,10 +168,16 @@ def _make_handler(
 
             return result_str
 
-        result_json = await asyncio.wait_for(
-            asyncio.to_thread(_call_wasm),
-            timeout=timeout,
-        )
+        try:
+            result_json = await asyncio.wait_for(
+                asyncio.to_thread(_call_wasm),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            # Force-stop the WASM execution via epoch interrupt
+            # and evict the poisoned instance so next call is fresh
+            registry.interrupt_instance(module.name, metadata.thread_id)
+            raise
 
         # 4. Deserialize response
         result_dict = json.loads(result_json)

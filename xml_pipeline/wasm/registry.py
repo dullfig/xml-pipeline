@@ -39,12 +39,17 @@ class WasmRegistry:
         self._modules: Dict[str, Any] = {}
         # "name:thread_id" → WasmInstanceHandle
         self._instances: Dict[str, WasmInstanceHandle] = {}
+        # name → wasmtime.Engine (for epoch bumping)
+        self._engines: Dict[str, Any] = {}
 
     def register_module(self, name: str, module: Any) -> None:
         """Register a loaded WASM module."""
         if name in self._modules:
             raise KeyError(f"WASM module '{name}' already registered")
         self._modules[name] = module
+        # Track engine reference for epoch interruption
+        if hasattr(module, 'engine') and module.engine is not None:
+            self._engines[name] = module.engine
         logger.info(f"WASM module registered: {name}")
 
     def get_module(self, name: str) -> Any:
@@ -68,6 +73,41 @@ class WasmRegistry:
     def get_instance(self, name: str, thread_id: str) -> Optional[WasmInstanceHandle]:
         """Get an existing instance for a module+thread, or None."""
         return self._instances.get(f"{name}:{thread_id}")
+
+    def evict_instance(self, name: str, thread_id: str) -> bool:
+        """
+        Remove a WASM instance without interrupting.
+
+        Use after timeout to discard a potentially poisoned instance
+        so the next call gets a fresh one.
+
+        Returns True if an instance was evicted.
+        """
+        key = f"{name}:{thread_id}"
+        if key in self._instances:
+            del self._instances[key]
+            logger.debug(f"Evicted WASM instance: {key}")
+            return True
+        return False
+
+    def interrupt_instance(self, name: str, thread_id: str) -> bool:
+        """
+        Bump the engine epoch and evict the instance.
+
+        This causes any in-flight wasmtime execution on this engine
+        to trap with an epoch interrupt, freeing the thread. The
+        poisoned instance is then evicted so the next call creates
+        a fresh Store+Instance.
+
+        Returns True if the engine was bumped and instance evicted.
+        """
+        engine = self._engines.get(name)
+        if engine is None:
+            return False
+        engine.increment_epoch()
+        self.evict_instance(name, thread_id)
+        logger.info(f"WASM epoch interrupt: {name} (thread {thread_id[:8]}...)")
+        return True
 
     def cleanup_for_thread(self, thread_id: str) -> int:
         """
@@ -94,6 +134,7 @@ class WasmRegistry:
         count = len(self._instances)
         self._instances.clear()
         self._modules.clear()
+        self._engines.clear()
         if count:
             logger.info(f"WASM registry shutdown: {count} instance(s) released")
         return count
