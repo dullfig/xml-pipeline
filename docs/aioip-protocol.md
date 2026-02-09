@@ -518,6 +518,143 @@ researcher's peers: [local-calculator, livermore:simulate.neutron, livermore:dat
                      ↑ local                ↑ remote (transparent to agent)
 ```
 
+## LLM Context Integration: Just-in-Time Tool Loading
+
+### The Problem
+
+When an LLM agent calls a federation tool, the remote organism returns new capabilities — listeners the agent has never seen before. The LLM has no `usage_instructions` for these remote tools. It doesn't know the schemas, the field names, or what the tools do. Static pre-loading of all possible remote schemas is wasteful, potentially stale, and breaks the zero-knowledge principle.
+
+### The Solution: Capability Schemas in the Response Payload
+
+The `federation.connect` handler returns capability documentation as its response payload. This response enters the context buffer via `.respond()`, and the LLM sees it on the next turn. It stays in context for the thread's lifetime — exactly where and when the LLM needs it.
+
+```
+Agent (LLM)                  federation.connect           Livermore
+    │                              │                          │
+    │  Question("connect to        │                          │
+    │   livermore for neutron sim") │                          │
+    │  ───────────────────────>    │                          │
+    │                              │  aioip 4-phase handshake │
+    │                              │  ──────────────────────> │
+    │                              │  <── capabilities ────── │
+    │                              │                          │
+    │  <── FederationResult ────── │                          │
+    │      .endpoints = [                                     │
+    │        {name: "livermore:simulate.neutron",              │
+    │         description: "Neutron transport Monte Carlo",   │
+    │         schema: "<NeutronSimRequest>                    │
+    │           <Geometry>string</Geometry>                   │
+    │           <Energy>double</Energy>                       │
+    │           <Particles>integer</Particles>                │
+    │         </NeutronSimRequest>",                          │
+    │         example: "<NeutronSimRequest>                   │
+    │           <Geometry>cylinder-10cm</Geometry>            │
+    │           <Energy>14.1</Energy>                         │
+    │           <Particles>1000000</Particles>                │
+    │         </NeutronSimRequest>"}                          │
+    │      ]                                                  │
+    │      .message = "Connected to livermore-sim-cluster.    │
+    │       2 endpoints available."                           │
+    │                                                         │
+    │  ── (LLM now has schemas in context) ──                │
+    │                                                         │
+    │  NeutronSimRequest(                                     │
+    │    Geometry="cylinder-10cm",                            │
+    │    Energy=14.1,                                         │
+    │    Particles=1000000)                                   │
+    │  ───────────────────────> (routed to livermore) ──────> │
+    │                                                         │
+    │  <── NeutronSimResult ──────────────────────────────── │
+    │      KEffective=1.02341                                 │
+    │      Uncertainty=0.00023                                │
+```
+
+### How It Works Mechanically
+
+1. **Agent's static peers** include `federation` (a local tool-listener)
+2. **Agent calls** `federation.connect` with target organism name
+3. **Federation handler** performs the aioip handshake:
+   - Opens connection (or reuses existing session)
+   - Authenticates (Ed25519 + TOTP)
+   - Receives filtered capabilities based on peer table
+   - Registers remote listeners as gateway peers in the local pump
+   - **Modifies the thread's peer table** to grant the agent access to the new remote listeners
+4. **Handler responds** with `FederationResult` containing the schema documentation
+5. **Context buffer** receives the response — the LLM sees the schemas on its next turn
+6. **Peer table** now includes the remote listeners — the pump allows routing to them
+7. **Agent constructs messages** using the schemas it just learned, sends them normally
+8. **Pump routes transparently** — the gateway peer forwards envelopes over the aioip connection
+
+### Peer Table Dynamics
+
+The critical piece: when `federation.connect` succeeds, the handler must update the thread's peer table to include the negotiated remote listeners. Without this, the pump's peer enforcement would block the agent from calling them.
+
+```python
+async def handle_federation_connect(payload: FederationConnect, metadata: HandlerMetadata):
+    # ... aioip handshake, get capabilities ...
+
+    # Register remote listeners as gateway peers in the pump
+    for cap in capabilities:
+        pump.register_gateway(f"{prefix}:{cap.name}", remote_session, cap.schema)
+
+    # Grant this thread access to the new remote peers
+    remote_peers = [f"{prefix}:{cap.name}" for cap in capabilities]
+    pump.modify_peer_table(
+        table_name,              # This thread's peer table
+        metadata.own_name,       # The agent that called us
+        grant=remote_peers,      # Add remote listeners to allowed peers
+    )
+
+    # Return schemas to the LLM via context buffer
+    return HandlerResponse.respond(
+        payload=FederationResult(
+            organism=remote_name,
+            endpoints=[...schema docs...],
+            message=f"Connected. {len(capabilities)} endpoints available.",
+        )
+    )
+```
+
+**Wait — ceiling enforcement.** `modify_peer_table(..., grant=...)` validates against the ceiling. The remote peers wouldn't exist in the ceiling (they weren't in the original YAML `listener.peers`).
+
+Two solutions:
+
+**Option A: Pre-declare federation wildcard in peers.** The agent's YAML config includes a wildcard or federation namespace:
+```yaml
+peers:
+  - local-calculator
+  - "livermore:*"        # Ceiling allows anything from livermore
+```
+The ceiling contains the wildcard; `modify_peer_table` grants specific endpoints within it.
+
+**Option B: Federation peers bypass ceiling.** Federation-granted peers are a separate privilege class — they come from a cryptographically authenticated source (the remote organism's filtered capability exchange), not from the local agent requesting them. The pump could have a `grant_federation_peer()` method that doesn't check the static ceiling.
+
+Option B is cleaner — the federation handshake IS the authorization. The remote organism already filtered capabilities through the peer table. Double-gating through the local ceiling adds complexity without security value.
+
+### Thread Scope
+
+The federation connection is thread-scoped:
+- The schemas are in THIS thread's context buffer
+- The peer table grants are for THIS thread
+- When the thread terminates, `_cleanup_thread()` can optionally close the federation session
+- A different thread (different user, different privilege tier) gets its own `federation.connect` call, its own capability negotiation, its own schemas
+
+This means two agents in the same organism can have different views of the same remote organism — one might see 4 endpoints, the other might see 2 — depending on which peer table their identity resolves to on the remote side.
+
+### Lazy vs Eager Connection
+
+Two patterns for when the connection happens:
+
+**Lazy (LLM-driven):** The agent decides when to connect. It calls `federation.connect("livermore")` as part of its reasoning. This is the pattern described above — just-in-time, thread-scoped.
+
+**Eager (boot-time):** The organism connects on startup (`auto_connect: true` in YAML). Remote listeners are pre-registered. The schemas are included in the agent's static `usage_instructions`. The LLM sees remote tools from the first turn.
+
+Both patterns have value:
+- **Lazy** for on-demand connections, dynamic target selection, thread-scoped isolation
+- **Eager** for always-available infrastructure (your org's compute cluster, shared data services)
+
+They're not mutually exclusive. An organism can have eager connections to known infrastructure and lazy connections to on-demand resources.
+
 ## Open Questions
 
 1. **TOTP per-identity or per-organism?** Currently sketched as per-identity (`totp_secret_env` per identity entry). Could also be per-organism (single TOTP for all connections to a given server).
@@ -529,3 +666,5 @@ researcher's peers: [local-calculator, livermore:simulate.neutron, livermore:dat
 4. **Rate limiting scope?** Should `max_inflight` be per-session, per-identity, or per-listener? Probably per-listener-per-session, with a global cap per-identity.
 
 5. **Protocol version negotiation?** The `<aioip version="1.0">` wrapper allows future protocol versions. Need to define a version negotiation mechanism for backward compatibility.
+
+6. **Federation peer ceiling bypass (Option A vs B)?** Should federation-granted peers go through the local ceiling (`livermore:*` wildcard in YAML) or bypass it entirely (federation handshake is its own authorization)? Option B is simpler but means the local admin can't cap what a remote organism offers. Option A gives the local admin a veto.
