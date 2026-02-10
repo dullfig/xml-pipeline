@@ -8,11 +8,14 @@ A ``status`` of ``"error"`` signals test failure (triggers coordinator retry).
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 from handlers.coding_swarm.payloads import SwarmMessage
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_tester(
@@ -60,13 +63,14 @@ async def handle_tester(
             ),
         )
     except Exception as exc:
+        logger.exception("Tester agent error for tool '%s'", payload.tool_name)
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="test-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
-                error=str(exc),
+                error="Agent error (details logged)",
                 iteration=payload.iteration,
                 phase=payload.phase,
             ),

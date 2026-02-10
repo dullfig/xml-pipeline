@@ -15,6 +15,8 @@ from handlers.coding_swarm.tools import (
     handle_workspace_read,
     handle_workspace_write,
     handle_build_run,
+    set_swarm_backend,
+    get_swarm_backend,
 )
 
 __all__ = [
@@ -27,4 +29,6 @@ __all__ = [
     "handle_workspace_read",
     "handle_workspace_write",
     "handle_build_run",
+    "set_swarm_backend",
+    "get_swarm_backend",
 ]

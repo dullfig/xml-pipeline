@@ -8,11 +8,11 @@ for peer-enforcement.
 State Machine Phases
 --------------------
 init       → receive task          → send design-request to architect
-designing  → receive design-result → send write-request (WIT) to workspace-write
+designing  → receive design-result → validate WIT → send write-request to workspace-write
 wit-saved  → receive write-result  → send code-request to coder
-coding     → receive code-result   → send write-request (AS) to workspace-write
+coding     → receive code-result   → validate code → send write-request (AS) to workspace-write
 src-saved  → receive write-result  → send test-request to tester
-testing    → receive test-result   → if fail & retries<3: back to coding
+testing    → receive test-result   → validate Python → if fail & retries<3: back to coding
                                      else: send write-request (tests)
 tests-saved→ receive write-result  → send review-request to reviewer
 reviewing  → receive review-result → if reject & retries<2: back to coding
@@ -21,6 +21,10 @@ reviewing  → receive review-result → if reject & retries<2: back to coding
 
 from __future__ import annotations
 
+import ast
+import logging
+import re
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -28,8 +32,16 @@ from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerRespo
 
 from handlers.coding_swarm.payloads import SwarmMessage
 
+logger = logging.getLogger(__name__)
+
 MAX_TEST_RETRIES = 3
 MAX_REVIEW_RETRIES = 2
+MAX_DESIGN_RETRIES = 3
+MAX_CODE_SIZE = 1 * 1024 * 1024  # 1 MB
+MAX_STATES = 100
+STATE_TTL = 3600  # 1 hour
+
+TOOL_NAME_RE = re.compile(r'^[a-z][a-z0-9_-]*$')
 
 
 @dataclass
@@ -43,7 +55,9 @@ class CoordinatorState:
     test_content: str = ""
     test_retries: int = 0
     review_retries: int = 0
+    design_retries: int = 0
     last_error: str = ""
+    created_at: float = field(default_factory=time.time)
 
 
 # Thread-scoped state: thread_id -> CoordinatorState
@@ -60,6 +74,60 @@ def cleanup_thread(thread_id: str) -> None:
     _states.pop(thread_id, None)
 
 
+# ── Validation helpers ────────────────────────────────────────────────────
+
+def _validate_tool_name(name: str) -> Optional[str]:
+    """Validate a tool name. Returns error string or None."""
+    if not name:
+        return "Empty tool name"
+    if len(name) > 64:
+        return f"Tool name too long ({len(name)} > 64)"
+    if not TOOL_NAME_RE.match(name):
+        return "Tool name must start with lowercase letter, contain only [a-z0-9_-]"
+    return None
+
+
+def _validate_wit_content(content: str) -> Optional[str]:
+    """Validate WIT content using the WASM WIT parser. Returns error string or None."""
+    if not content or not content.strip():
+        return "Empty WIT content"
+    try:
+        from xml_pipeline.wasm.wit_parser import parse_wit
+        parse_wit(content)
+        return None
+    except Exception as exc:
+        return f"Invalid WIT: {exc}"
+
+
+def _validate_python_content(content: str) -> Optional[str]:
+    """Validate Python source via ast.parse(). Returns error string or None."""
+    if not content or not content.strip():
+        return "Empty Python content"
+    try:
+        ast.parse(content)
+        return None
+    except SyntaxError as exc:
+        return f"Python syntax error: {exc}"
+
+
+def _validate_code_content(content: str) -> Optional[str]:
+    """Validate code content is non-empty and within size limit. Returns error string or None."""
+    if not content or not content.strip():
+        return "Empty code content"
+    if len(content.encode("utf-8")) > MAX_CODE_SIZE:
+        return f"Code exceeds {MAX_CODE_SIZE} byte limit"
+    return None
+
+
+def _evict_expired_states() -> None:
+    """Remove states older than STATE_TTL."""
+    now = time.time()
+    expired = [tid for tid, s in _states.items() if now - s.created_at > STATE_TTL]
+    for tid in expired:
+        logger.info("Evicting expired coordinator state for thread %s", tid)
+        del _states[tid]
+
+
 async def handle_coordinator(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
@@ -72,6 +140,18 @@ async def handle_coordinator(
     if state is None:
         if payload.role != "task":
             return None  # Unexpected message without an active task
+
+        # Validate tool name
+        name_error = _validate_tool_name(payload.tool_name)
+        if name_error:
+            return None
+
+        # Evict expired states and enforce max
+        _evict_expired_states()
+        if len(_states) >= MAX_STATES:
+            logger.warning("Max coordinator states (%d) reached, rejecting task", MAX_STATES)
+            return None
+
         state = CoordinatorState(
             phase="designing",
             tool_name=payload.tool_name,
@@ -98,6 +178,33 @@ async def handle_coordinator(
         if payload.status == "error":
             cleanup_thread(tid)
             return None
+
+        # Validate WIT output
+        wit_error = _validate_wit_content(payload.content)
+        if wit_error:
+            state.design_retries += 1
+            if state.design_retries >= MAX_DESIGN_RETRIES:
+                logger.warning("Max design retries for thread %s", tid)
+                cleanup_thread(tid)
+                return None
+            # Retry: send back to architect with error feedback
+            return HandlerResponse(
+                payload=SwarmMessage(
+                    role="design-request",
+                    tool_name=state.tool_name,
+                    content=(
+                        f"{state.requirements}\n\n"
+                        f"Previous attempt failed validation (attempt "
+                        f"{state.design_retries}/{MAX_DESIGN_RETRIES}):\n{wit_error}"
+                    ),
+                    status="pending",
+                    error="",
+                    iteration=state.design_retries,
+                    phase="designing",
+                ),
+                to="architect",
+            )
+
         state.wit_content = payload.content
         state.phase = "wit-saving"
         return HandlerResponse(
@@ -145,6 +252,33 @@ async def handle_coordinator(
         if payload.status == "error":
             cleanup_thread(tid)
             return None
+
+        # Validate code output
+        code_error = _validate_code_content(payload.content)
+        if code_error:
+            state.test_retries += 1
+            if state.test_retries >= MAX_TEST_RETRIES:
+                cleanup_thread(tid)
+                return None
+            state.last_error = code_error
+            return HandlerResponse(
+                payload=SwarmMessage(
+                    role="code-request",
+                    tool_name=state.tool_name,
+                    content=(
+                        f"WIT:\n{state.wit_content}\n\n"
+                        f"Requirements:\n{state.requirements}\n\n"
+                        f"Code validation failed (attempt {state.test_retries}/{MAX_TEST_RETRIES}):\n"
+                        f"{code_error}"
+                    ),
+                    status="pending",
+                    error="",
+                    iteration=state.test_retries,
+                    phase="coding",
+                ),
+                to="coder",
+            )
+
         state.code_content = payload.content
         state.phase = "src-saving"
         return HandlerResponse(
@@ -211,6 +345,32 @@ async def handle_coordinator(
                 ),
                 to="coder",
             )
+
+        # Validate Python test output
+        py_error = _validate_python_content(payload.content)
+        if py_error:
+            state.test_retries += 1
+            if state.test_retries >= MAX_TEST_RETRIES:
+                cleanup_thread(tid)
+                return None
+            state.last_error = py_error
+            return HandlerResponse(
+                payload=SwarmMessage(
+                    role="test-request",
+                    tool_name=state.tool_name,
+                    content=(
+                        f"WIT:\n{state.wit_content}\n\nSource:\n{state.code_content}\n\n"
+                        f"Previous test code had syntax errors (attempt "
+                        f"{state.test_retries}/{MAX_TEST_RETRIES}):\n{py_error}"
+                    ),
+                    status="pending",
+                    error="",
+                    iteration=state.test_retries,
+                    phase="testing",
+                ),
+                to="tester",
+            )
+
         state.test_content = payload.content
         state.phase = "tests-saving"
         return HandlerResponse(

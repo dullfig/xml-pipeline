@@ -2,75 +2,102 @@
 tools.py — Workspace and build tool handlers for the coding swarm.
 
 Three scoped tools with security constraints:
-- workspace-read:  Read files from a sandboxed workspace directory
-- workspace-write: Write files to the sandboxed workspace directory
+- workspace-read:  Read artifacts from KV-backed storage
+- workspace-write: Write artifacts to KV-backed storage
 - build-run:       Execute whitelisted commands only
 
 Security:
-- Path traversal prevention (rejects ``..``, absolute paths)
+- Artifact name validation (no paths, traversal, or bad extensions)
 - Command whitelist enforcement
 - File size limits (10 MB)
-- Command timeout (60 s)
+- Command timeout (15 s)
+- Per-thread isolation via KV key prefixing
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import re
+import shlex
+import tempfile
 from pathlib import Path
 from typing import Optional
 
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
+from xml_pipeline.tools.keyvalue import KVBackend, MemoryBackend
 
 from handlers.coding_swarm.payloads import SwarmMessage
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-# Default workspace root — overridable for testing via set_workspace_root()
-_workspace_root: Path = Path("examples/coding-swarm/workspace").resolve()
-
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-COMMAND_TIMEOUT = 60  # seconds
+COMMAND_TIMEOUT = 15  # seconds
 ALLOWED_COMMANDS = {"asc", "npm", "npx", "node", "pytest"}
 
-
-def set_workspace_root(path: Path) -> None:
-    """Override workspace root (for tests)."""
-    global _workspace_root
-    _workspace_root = path.resolve()
+# Artifact name validation
+ARTIFACT_NAME_RE = re.compile(r'^[a-zA-Z0-9_.-]+$')
+ALLOWED_EXTENSIONS = {".wit", ".ts", ".py", ".json", ".wasm"}
 
 
-def get_workspace_root() -> Path:
-    """Return the current workspace root."""
-    return _workspace_root
+# ── Backend management ────────────────────────────────────────────────────
+
+_backend: Optional[KVBackend] = None
 
 
-# ── Path validation ────────────────────────────────────────────────────────
+def set_swarm_backend(backend: KVBackend) -> None:
+    """Set the KV backend for swarm artifact storage."""
+    global _backend
+    _backend = backend
 
-def _validate_path(relative: str) -> Path:
-    """Validate and resolve a relative path within the workspace.
 
-    Raises ValueError if the path is unsafe.
+def get_swarm_backend() -> KVBackend:
+    """Return the current backend, creating MemoryBackend if unset."""
+    global _backend
+    if _backend is None:
+        _backend = MemoryBackend()
+    return _backend
+
+
+def _reset_backend() -> None:
+    """Reset backend to unconfigured (for tests)."""
+    global _backend
+    _backend = None
+
+
+# ── Artifact name validation ──────────────────────────────────────────────
+
+def _validate_artifact_name(name: str) -> None:
+    """Validate an artifact name for storage.
+
+    Raises ValueError if the name is unsafe.
     """
-    if not relative or relative.strip() == "":
-        raise ValueError("Empty path")
+    if not name or name.strip() == "":
+        raise ValueError("Empty artifact name")
 
-    # Reject absolute paths
-    if os.path.isabs(relative):
-        raise ValueError(f"Absolute paths not allowed: {relative}")
+    if len(name) > 255:
+        raise ValueError(f"Artifact name too long ({len(name)} > 255)")
 
-    # Reject path traversal components
-    parts = Path(relative).parts
-    if ".." in parts:
-        raise ValueError(f"Path traversal not allowed: {relative}")
+    # Reject slashes, backslashes, absolute paths
+    if "/" in name or "\\" in name:
+        raise ValueError(f"Slashes not allowed in artifact name: {name}")
 
-    resolved = (_workspace_root / relative).resolve()
+    # Reject traversal
+    if ".." in name:
+        raise ValueError(f"Path traversal not allowed: {name}")
 
-    # Final containment check
-    if not str(resolved).startswith(str(_workspace_root)):
-        raise ValueError(f"Path escapes workspace: {relative}")
+    # Reject absolute paths (Windows drive letters, Unix root)
+    if os.path.isabs(name):
+        raise ValueError(f"Absolute paths not allowed: {name}")
 
-    return resolved
+    # Must match safe pattern
+    if not ARTIFACT_NAME_RE.match(name):
+        raise ValueError(f"Invalid artifact name (only alphanumeric, _, ., - allowed): {name}")
+
+    # Check extension
+    _, ext = os.path.splitext(name)
+    if ext and ext.lower() not in ALLOWED_EXTENSIONS:
+        raise ValueError(f"Extension '{ext}' not in allowed set: {sorted(ALLOWED_EXTENSIONS)}")
 
 
 # ── Handlers ───────────────────────────────────────────────────────────────
@@ -79,22 +106,26 @@ async def handle_workspace_read(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Read a file from the sandboxed workspace.
+    """Read an artifact from KV-backed storage.
 
-    Expected ``content`` format: ``path:relative/file.ext``
+    Expected ``content`` format: ``path:artifact_name``
     """
     try:
         if not payload.content.startswith("path:"):
             raise ValueError("Content must start with 'path:'")
-        relative = payload.content[len("path:"):].strip()
-        target = _validate_path(relative)
+        name = payload.content[len("path:"):].strip()
+        _validate_artifact_name(name)
 
-        if not target.exists():
-            raise FileNotFoundError(f"File not found: {relative}")
-        if not target.is_file():
-            raise ValueError(f"Not a file: {relative}")
+        backend = get_swarm_backend()
+        key = f"{metadata.thread_id}:{name}"
+        content = await backend.get(key)
 
-        content = target.read_text(encoding="utf-8")
+        if content is None:
+            raise FileNotFoundError(f"Artifact not found: {name}")
+
+        if len(content.encode("utf-8")) > MAX_FILE_SIZE:
+            raise ValueError(f"Artifact exceeds {MAX_FILE_SIZE} byte limit")
+
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="read-result",
@@ -124,11 +155,11 @@ async def handle_workspace_write(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Write a file to the sandboxed workspace.
+    """Write an artifact to KV-backed storage.
 
     Expected ``content`` format::
 
-        path:relative/file.ext
+        path:artifact_name
         <file content follows on remaining lines>
     """
     try:
@@ -137,21 +168,23 @@ async def handle_workspace_write(
 
         # Split first line (path) from rest (file content)
         first_newline = payload.content.index("\n")
-        relative = payload.content[len("path:"):first_newline].strip()
+        name = payload.content[len("path:"):first_newline].strip()
         file_content = payload.content[first_newline + 1:]
 
         if len(file_content.encode("utf-8")) > MAX_FILE_SIZE:
             raise ValueError(f"File exceeds {MAX_FILE_SIZE} byte limit")
 
-        target = _validate_path(relative)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(file_content, encoding="utf-8")
+        _validate_artifact_name(name)
+
+        backend = get_swarm_backend()
+        key = f"{metadata.thread_id}:{name}"
+        await backend.set(key, file_content)
 
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="write-result",
                 tool_name=payload.tool_name,
-                content=relative,
+                content=name,
                 status="success",
                 error="",
                 iteration=payload.iteration,
@@ -176,12 +209,15 @@ async def handle_build_run(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Run a whitelisted command in the workspace directory.
+    """Run a whitelisted command against thread artifacts.
 
     Expected ``content`` format: ``command arg1 arg2 ...``
+
+    Artifacts are extracted to a temporary directory, the command runs there,
+    and any new/modified files are stored back in KV.
     """
     try:
-        parts = payload.content.strip().split()
+        parts = shlex.split(payload.content.strip())
         if not parts:
             raise ValueError("Empty command")
 
@@ -191,46 +227,78 @@ async def handle_build_run(
                 f"Command '{cmd}' not in whitelist: {sorted(ALLOWED_COMMANDS)}"
             )
 
-        proc = await asyncio.create_subprocess_exec(
-            *parts,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(_workspace_root),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=COMMAND_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            raise TimeoutError(f"Command timed out after {COMMAND_TIMEOUT}s")
+        backend = get_swarm_backend()
+        prefix = f"{metadata.thread_id}:"
 
-        output = stdout.decode("utf-8", errors="replace")
-        if proc.returncode != 0:
-            err_output = stderr.decode("utf-8", errors="replace")
+        # Fetch all thread artifacts
+        all_keys = await backend.keys(f"{prefix}*")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+
+            # Extract artifacts to tmpdir
+            for key in all_keys:
+                artifact_name = key[len(prefix):]
+                content = await backend.get(key)
+                if content is not None:
+                    target = tmpdir_path / artifact_name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+
+            # Snapshot mtimes before run
+            before_mtimes = {}
+            for f in tmpdir_path.iterdir():
+                if f.is_file():
+                    before_mtimes[f.name] = f.stat().st_mtime
+
+            proc = await asyncio.create_subprocess_exec(
+                *parts,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(tmpdir_path),
+            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=COMMAND_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                raise TimeoutError(f"Command timed out after {COMMAND_TIMEOUT}s")
+
+            # Scan for new/modified files and store back
+            for f in tmpdir_path.iterdir():
+                if f.is_file():
+                    old_mtime = before_mtimes.get(f.name)
+                    if old_mtime is None or f.stat().st_mtime > old_mtime:
+                        new_content = f.read_text(encoding="utf-8")
+                        await backend.set(f"{prefix}{f.name}", new_content)
+
+            output = stdout.decode("utf-8", errors="replace")
+            if proc.returncode != 0:
+                err_output = stderr.decode("utf-8", errors="replace")
+                return HandlerResponse.respond(
+                    payload=SwarmMessage(
+                        role="build-result",
+                        tool_name=payload.tool_name,
+                        content=output,
+                        status="error",
+                        error=f"Exit code {proc.returncode}: {err_output}",
+                        iteration=payload.iteration,
+                        phase=payload.phase,
+                    ),
+                )
+
             return HandlerResponse.respond(
                 payload=SwarmMessage(
                     role="build-result",
                     tool_name=payload.tool_name,
                     content=output,
-                    status="error",
-                    error=f"Exit code {proc.returncode}: {err_output}",
+                    status="success",
+                    error="",
                     iteration=payload.iteration,
                     phase=payload.phase,
                 ),
             )
-
-        return HandlerResponse.respond(
-            payload=SwarmMessage(
-                role="build-result",
-                tool_name=payload.tool_name,
-                content=output,
-                status="success",
-                error="",
-                iteration=payload.iteration,
-                phase=payload.phase,
-            ),
-        )
     except Exception as exc:
         return HandlerResponse.respond(
             payload=SwarmMessage(

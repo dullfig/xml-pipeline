@@ -7,11 +7,14 @@ interface definition, and returns a ``design-result``.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 from handlers.coding_swarm.payloads import SwarmMessage
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_architect(
@@ -58,13 +61,14 @@ async def handle_architect(
             ),
         )
     except Exception as exc:
+        logger.exception("Architect agent error for tool '%s'", payload.tool_name)
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="design-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
-                error=str(exc),
+                error="Agent error (details logged)",
                 iteration=payload.iteration,
                 phase=payload.phase,
             ),
