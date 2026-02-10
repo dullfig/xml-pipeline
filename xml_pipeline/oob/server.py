@@ -289,6 +289,17 @@ class OOBServer:
 
     def _on_pump_event(self, event: PumpEvent) -> None:
         """Bridge pump events to OOB push delivery (non-blocking)."""
+        from xml_pipeline.message_bus.events import ReloadEvent
+
+        # Invalidate all OOB sessions on config reload (policy may have changed)
+        if isinstance(event, ReloadEvent):
+            count = len(self._authenticated)
+            self._authenticated.clear()
+            if count:
+                logger.info(
+                    f"Config reloaded — invalidated {count} OOB session(s)"
+                )
+
         if not self._subscriptions:
             return
 

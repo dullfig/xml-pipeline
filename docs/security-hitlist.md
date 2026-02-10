@@ -266,10 +266,11 @@ bits are set (`mode & 0o077`). Skipped on Windows. Recommends `chmod 600`.
 GC evicts oldest thread when limit reached. The 10M object worst case is
 theoretical — in practice, thread lifetimes are much shorter.
 
-### [ ] 36. No OOB session invalidation on config reload
+### [x] 36. No OOB session invalidation on config reload
 **File:** `oob/server.py`
 **Issue:** `_authenticated` set survives hot-reload. Stale auth persists.
-**Fix needed:** Subscribe to ReloadEvent and clear `_authenticated`.
+**Fix:** `_on_pump_event()` now clears `_authenticated` on `ReloadEvent`.
+All OOB clients must re-authenticate after config reload.
 
 ### [x] 37. Thread budget underflow hidden
 **File:** `message_bus/budget_registry.py:58-60`
