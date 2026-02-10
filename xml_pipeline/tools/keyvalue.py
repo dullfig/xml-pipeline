@@ -1,16 +1,18 @@
 """
 Key-value store tool - persistent agent state.
 
-Backend: async SQLite via aiosqlite (zero external deps).
-Falls back to in-memory dict if aiosqlite is unavailable.
+Pluggable backend via KVBackend protocol.
+Default: SQLite (via aiosqlite) with in-memory fallback.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
+import os
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Protocol, runtime_checkable
 
 from .base import tool, ToolResult
 
@@ -26,35 +28,44 @@ except ImportError:
     aiosqlite = None  # type: ignore[assignment]
     AIOSQLITE_AVAILABLE = False
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-_db_path: Optional[str] = None
-_initialized: bool = False
-
-# Fallback in-memory store (used when aiosqlite unavailable)
-_mem_store: dict[str, tuple[Any, Optional[float]]] = {}  # ns_key → (value, expiry_at)
-
-
-def configure_keyvalue(db_path: str = "~/.xml-pipeline/kv.db") -> None:
-    """Set the SQLite database path. Call before first use."""
-    global _db_path, _initialized
-    import os
-    _db_path = os.path.expanduser(db_path)
-    _initialized = False
-
-
-def _reset() -> None:
-    """Reset global state (for tests)."""
-    global _db_path, _initialized, _mem_store
-    _db_path = None
-    _initialized = False
-    _mem_store.clear()
-
 
 # ---------------------------------------------------------------------------
-# SQLite helpers
+# Backend protocol
 # ---------------------------------------------------------------------------
+
+@runtime_checkable
+class KVBackend(Protocol):
+    """Pluggable backend for key-value storage.
+
+    All values are strings (JSON-serialized by the @tool layer).
+    Keys are pre-namespaced by the @tool layer (e.g. "default:mykey").
+    """
+
+    async def get(self, key: str) -> Optional[str]:
+        """Return the stored value, or None if missing/expired."""
+        ...
+
+    async def set(self, key: str, value: str, ttl: Optional[float] = None) -> None:
+        """Store a value. ttl is seconds until expiry (None = no expiry)."""
+        ...
+
+    async def delete(self, key: str) -> bool:
+        """Delete a key. Return True if it existed."""
+        ...
+
+    async def keys(self, pattern: str = "*") -> list[str]:
+        """Return keys matching a glob pattern. Expired keys excluded."""
+        ...
+
+    async def close(self) -> None:
+        """Release resources."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# SQLite backend
+# ---------------------------------------------------------------------------
+
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS kv_store (
     ns_key TEXT PRIMARY KEY,
@@ -64,95 +75,175 @@ CREATE TABLE IF NOT EXISTS kv_store (
 """
 
 
-async def _ensure_db() -> None:
-    """Create table on first use (idempotent)."""
-    global _initialized
-    if _initialized:
-        return
-    if not AIOSQLITE_AVAILABLE or not _db_path:
-        return
-    import os
-    os.makedirs(os.path.dirname(os.path.abspath(_db_path)), exist_ok=True)
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(_CREATE_TABLE)
-        await db.commit()
-    _initialized = True
+class SqliteBackend:
+    """KVBackend backed by aiosqlite."""
 
+    def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
+        self._initialized = False
+
+    async def _ensure_db(self) -> None:
+        if self._initialized:
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(self._db_path)), exist_ok=True)
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(_CREATE_TABLE)
+            await db.commit()
+        self._initialized = True
+
+    async def get(self, key: str) -> Optional[str]:
+        await self._ensure_db()
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT value, expiry_at FROM kv_store WHERE ns_key = ?", (key,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            value, expiry_at = row
+            if expiry_at is not None and time.time() > expiry_at:
+                await db.execute("DELETE FROM kv_store WHERE ns_key = ?", (key,))
+                await db.commit()
+                return None
+            return value
+
+    async def set(self, key: str, value: str, ttl: Optional[float] = None) -> None:
+        await self._ensure_db()
+        expiry_at = (time.time() + ttl) if ttl else None
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO kv_store (ns_key, value, expiry_at) VALUES (?, ?, ?)",
+                (key, value, expiry_at),
+            )
+            await db.commit()
+
+    async def delete(self, key: str) -> bool:
+        await self._ensure_db()
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM kv_store WHERE ns_key = ?", (key,)
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def keys(self, pattern: str = "*") -> list[str]:
+        await self._ensure_db()
+        if pattern == "*":
+            sql_pattern = "%"
+        else:
+            sql_pattern = pattern.replace("*", "%").replace("?", "_")
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "SELECT ns_key FROM kv_store WHERE ns_key LIKE ? "
+                "AND (expiry_at IS NULL OR expiry_at > ?)",
+                (sql_pattern, time.time()),
+            )
+            rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+
+    async def close(self) -> None:
+        pass  # connections are per-operation
+
+
+# ---------------------------------------------------------------------------
+# In-memory backend
+# ---------------------------------------------------------------------------
+
+class MemoryBackend:
+    """KVBackend backed by an in-memory dict. No persistence."""
+
+    def __init__(self) -> None:
+        self._store: dict[str, tuple[str, Optional[float]]] = {}
+
+    async def get(self, key: str) -> Optional[str]:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        value, expiry_at = entry
+        if expiry_at is not None and time.time() > expiry_at:
+            del self._store[key]
+            return None
+        return value
+
+    async def set(self, key: str, value: str, ttl: Optional[float] = None) -> None:
+        expiry_at = (time.time() + ttl) if ttl else None
+        self._store[key] = (value, expiry_at)
+
+    async def delete(self, key: str) -> bool:
+        return self._store.pop(key, None) is not None
+
+    async def keys(self, pattern: str = "*") -> list[str]:
+        now = time.time()
+        result = []
+        for key, (_, expiry_at) in list(self._store.items()):
+            if expiry_at is not None and now > expiry_at:
+                del self._store[key]
+                continue
+            if pattern == "*" or fnmatch.fnmatch(key, pattern):
+                result.append(key)
+        return result
+
+    async def close(self) -> None:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Global backend management
+# ---------------------------------------------------------------------------
+
+_backend: Optional[KVBackend] = None
+
+
+def configure_keyvalue(
+    db_path: Optional[str] = None,
+    *,
+    backend: Optional[KVBackend] = None,
+) -> None:
+    """Configure the KV backend.
+
+    Usage:
+        configure_keyvalue(db_path="data.db")          # SQLite (default)
+        configure_keyvalue(backend=MyRedisBackend())    # Custom backend
+    """
+    global _backend
+    if backend is not None:
+        _backend = backend
+    elif db_path is not None:
+        expanded = os.path.expanduser(db_path)
+        if AIOSQLITE_AVAILABLE:
+            _backend = SqliteBackend(expanded)
+        else:
+            logger.warning("aiosqlite not available, falling back to in-memory backend")
+            _backend = MemoryBackend()
+    else:
+        # No args = reset to unconfigured (next access gets MemoryBackend)
+        _backend = None
+
+
+def _get_backend() -> KVBackend:
+    """Return the active backend, creating MemoryBackend if unconfigured."""
+    global _backend
+    if _backend is None:
+        _backend = MemoryBackend()
+    return _backend
+
+
+def _reset() -> None:
+    """Reset global state (for tests)."""
+    global _backend
+    _backend = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _ns_key(namespace: Optional[str], key: str) -> str:
     return f"{namespace or 'default'}:{key}"
 
 
-async def _sqlite_get(ns_key: str) -> Any:
-    await _ensure_db()
-    async with aiosqlite.connect(_db_path) as db:
-        cursor = await db.execute(
-            "SELECT value, expiry_at FROM kv_store WHERE ns_key = ?", (ns_key,)
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        value_json, expiry_at = row
-        if expiry_at is not None and time.time() > expiry_at:
-            # Expired — lazily delete
-            await db.execute("DELETE FROM kv_store WHERE ns_key = ?", (ns_key,))
-            await db.commit()
-            return None
-        return json.loads(value_json)
-
-
-async def _sqlite_set(ns_key: str, value: Any, ttl: Optional[int]) -> None:
-    await _ensure_db()
-    expiry_at = (time.time() + ttl) if ttl else None
-    value_json = json.dumps(value)
-    async with aiosqlite.connect(_db_path) as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO kv_store (ns_key, value, expiry_at) VALUES (?, ?, ?)",
-            (ns_key, value_json, expiry_at),
-        )
-        await db.commit()
-
-
-async def _sqlite_delete(ns_key: str) -> bool:
-    await _ensure_db()
-    async with aiosqlite.connect(_db_path) as db:
-        cursor = await db.execute(
-            "DELETE FROM kv_store WHERE ns_key = ?", (ns_key,)
-        )
-        await db.commit()
-        return cursor.rowcount > 0
-
-
 # ---------------------------------------------------------------------------
-# In-memory fallback
-# ---------------------------------------------------------------------------
-
-def _mem_get(ns_key: str) -> Any:
-    entry = _mem_store.get(ns_key)
-    if entry is None:
-        return None
-    value, expiry_at = entry
-    if expiry_at is not None and time.time() > expiry_at:
-        del _mem_store[ns_key]
-        return None
-    return value
-
-
-def _mem_set(ns_key: str, value: Any, ttl: Optional[int]) -> None:
-    expiry_at = (time.time() + ttl) if ttl else None
-    _mem_store[ns_key] = (value, expiry_at)
-
-
-def _mem_delete(ns_key: str) -> bool:
-    return _mem_store.pop(ns_key, None) is not None
-
-
-def _use_sqlite() -> bool:
-    return AIOSQLITE_AVAILABLE and _db_path is not None
-
-
-# ---------------------------------------------------------------------------
-# @tool interface (unchanged signatures)
+# @tool interface
 # ---------------------------------------------------------------------------
 
 @tool
@@ -171,10 +262,8 @@ async def key_value_get(
         Stored value, or null if not found
     """
     nk = _ns_key(namespace, key)
-    if _use_sqlite():
-        value = await _sqlite_get(nk)
-    else:
-        value = _mem_get(nk)
+    raw = await _get_backend().get(nk)
+    value = json.loads(raw) if raw is not None else None
     return ToolResult(success=True, data=value)
 
 
@@ -199,10 +288,8 @@ async def key_value_set(
     """
     nk = _ns_key(namespace, key)
     try:
-        if _use_sqlite():
-            await _sqlite_set(nk, value, ttl)
-        else:
-            _mem_set(nk, value, ttl)
+        raw = json.dumps(value)
+        await _get_backend().set(nk, raw, ttl=ttl)
         return ToolResult(success=True, data=True)
     except (TypeError, ValueError) as e:
         return ToolResult(success=False, error=f"Value not JSON-serializable: {e}")
@@ -224,8 +311,5 @@ async def key_value_delete(
         deleted (bool)
     """
     nk = _ns_key(namespace, key)
-    if _use_sqlite():
-        deleted = await _sqlite_delete(nk)
-    else:
-        deleted = _mem_delete(nk)
+    deleted = await _get_backend().delete(nk)
     return ToolResult(success=True, data=deleted)

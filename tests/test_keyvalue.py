@@ -1,22 +1,21 @@
 """
-Tests for key-value store tool (SQLite backend + in-memory fallback).
+Tests for key-value store tool (pluggable backend: SQLite + in-memory).
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
+import json
 import time
 from unittest.mock import patch
 
 import pytest
 
 from xml_pipeline.tools.keyvalue import (
-    _mem_delete,
-    _mem_get,
-    _mem_set,
+    KVBackend,
+    MemoryBackend,
+    SqliteBackend,
+    _get_backend,
     _reset,
-    _use_sqlite,
     configure_keyvalue,
     key_value_delete,
     key_value_get,
@@ -44,12 +43,134 @@ def tmp_db(tmp_path):
     return db_path
 
 
+@pytest.fixture
+def memory_backend():
+    """Return a standalone MemoryBackend."""
+    return MemoryBackend()
+
+
+# ============================================================================
+# TestKVBackendProtocol — protocol compliance
+# ============================================================================
+
+class TestKVBackendProtocol:
+    """Verify that concrete backends satisfy the Protocol."""
+
+    def test_memory_is_kv_backend(self):
+        assert isinstance(MemoryBackend(), KVBackend)
+
+    def test_sqlite_is_kv_backend(self):
+        assert isinstance(SqliteBackend("/tmp/fake.db"), KVBackend)
+
+    def test_custom_backend_accepted(self):
+        """A plain class matching the protocol is accepted."""
+        class CustomBackend:
+            async def get(self, key): return None
+            async def set(self, key, value, ttl=None): pass
+            async def delete(self, key): return False
+            async def keys(self, pattern="*"): return []
+            async def close(self): pass
+
+        assert isinstance(CustomBackend(), KVBackend)
+
+
+# ============================================================================
+# TestPluggableBackend — configure_keyvalue(backend=...)
+# ============================================================================
+
+class TestPluggableBackend:
+    """Test plugging in a custom backend."""
+
+    async def test_custom_backend_used(self):
+        """configure_keyvalue(backend=...) routes all ops through it."""
+        calls = []
+
+        class SpyBackend:
+            async def get(self, key):
+                calls.append(("get", key))
+                return json.dumps("spied")
+            async def set(self, key, value, ttl=None):
+                calls.append(("set", key, value, ttl))
+            async def delete(self, key):
+                calls.append(("delete", key))
+                return True
+            async def keys(self, pattern="*"):
+                return []
+            async def close(self):
+                pass
+
+        configure_keyvalue(backend=SpyBackend())
+
+        await key_value_set(key="k", value="v")
+        result = await key_value_get(key="k")
+        assert result.data == "spied"
+        await key_value_delete(key="k")
+
+        assert ("set", "default:k", json.dumps("v"), None) in calls
+        assert ("get", "default:k") in calls
+        assert ("delete", "default:k") in calls
+
+    async def test_backend_overrides_db_path(self):
+        """backend= takes precedence even if db_path was set before."""
+        configure_keyvalue(db_path="/tmp/ignored.db")
+        mb = MemoryBackend()
+        configure_keyvalue(backend=mb)
+        assert _get_backend() is mb
+
+
+# ============================================================================
+# TestMemoryBackend — direct backend API
+# ============================================================================
+
+class TestMemoryBackend:
+    """Test MemoryBackend directly (not through @tool)."""
+
+    async def test_get_set_delete(self, memory_backend):
+        mb = memory_backend
+        assert await mb.get("k") is None
+        await mb.set("k", "v")
+        assert await mb.get("k") == "v"
+        assert await mb.delete("k") is True
+        assert await mb.get("k") is None
+        assert await mb.delete("k") is False
+
+    async def test_ttl_expiry(self, memory_backend):
+        mb = memory_backend
+        await mb.set("k", "v", ttl=1)
+        # Force expiry
+        mb._store["k"] = ("v", time.time() - 1)
+        assert await mb.get("k") is None
+
+    async def test_keys_glob(self, memory_backend):
+        mb = memory_backend
+        await mb.set("ns1:a", "1")
+        await mb.set("ns1:b", "2")
+        await mb.set("ns2:a", "3")
+        assert sorted(await mb.keys("ns1:*")) == ["ns1:a", "ns1:b"]
+        assert await mb.keys("ns2:*") == ["ns2:a"]
+        assert len(await mb.keys()) == 3
+
+    async def test_keys_excludes_expired(self, memory_backend):
+        mb = memory_backend
+        await mb.set("live", "1")
+        await mb.set("dead", "2", ttl=1)
+        mb._store["dead"] = ("2", time.time() - 1)
+        assert await mb.keys() == ["live"]
+
+    async def test_close_is_noop(self, memory_backend):
+        mb = memory_backend
+        await mb.set("k", "v")
+        await mb.close()
+        # close doesn't destroy state (reset does that)
+        assert await mb.get("k") == "v"
+
+
 # ============================================================================
 # TestKeyValueBasicInMemory — in-memory fallback (no configure)
 # ============================================================================
 
 class TestKeyValueBasicInMemory:
-    """Test basic get/set/delete with in-memory backend."""
+    """Test basic get/set/delete with in-memory backend (via @tool)."""
 
     async def test_set_and_get(self):
         result = await key_value_set(key="foo", value="bar")
@@ -89,7 +210,6 @@ class TestKeyValueBasicInMemory:
 
     async def test_default_namespace(self):
         await key_value_set(key="k", value="v")
-        # Without namespace defaults to "default"
         result = await key_value_get(key="k")
         assert result.data == "v"
 
@@ -113,17 +233,16 @@ class TestKeyValueTTL:
         assert result.data == "v"
 
     async def test_ttl_expired_in_memory(self):
-        # Directly set with a past expiry
-        _mem_set("default:k", "v", ttl=None)
-        from xml_pipeline.tools.keyvalue import _mem_store
-        _mem_store["default:k"] = ("v", time.time() - 1)
+        await key_value_set(key="k", value="v", ttl=1)
+        # Force expiry via backend internals
+        backend = _get_backend()
+        backend._store["default:k"] = (json.dumps("v"), time.time() - 1)
 
         result = await key_value_get(key="k")
         assert result.data is None
 
     async def test_no_ttl_never_expires(self):
         await key_value_set(key="k", value="v")
-        # Should be accessible indefinitely
         result = await key_value_get(key="k")
         assert result.data == "v"
 
@@ -160,7 +279,7 @@ class TestKeyValueSQLite:
     """Test SQLite-backed key-value store."""
 
     async def test_set_and_get(self, tmp_db):
-        assert _use_sqlite() is True
+        assert isinstance(_get_backend(), SqliteBackend)
         result = await key_value_set(key="foo", value="bar")
         assert result.success is True
 
@@ -169,6 +288,7 @@ class TestKeyValueSQLite:
         assert result.data == "bar"
 
     async def test_db_file_created(self, tmp_db):
+        import os
         await key_value_set(key="k", value="v")
         assert os.path.exists(tmp_db)
 
@@ -211,7 +331,6 @@ class TestKeyValueSQLite:
 
     async def test_ttl_expired(self, tmp_db):
         """Expired keys should return None on read."""
-        # Insert with a very short TTL, then fake time
         await key_value_set(key="k", value="v", ttl=1)
         # Manually expire it by manipulating the DB
         import aiosqlite
@@ -253,6 +372,45 @@ class TestKeyValueSQLite:
 
 
 # ============================================================================
+# TestSQLiteBackendKeys — keys() method
+# ============================================================================
+
+class TestSQLiteBackendKeys:
+    """Test SqliteBackend.keys() directly."""
+
+    async def test_keys_all(self, tmp_db):
+        backend = _get_backend()
+        await backend.set("ns1:a", json.dumps(1))
+        await backend.set("ns1:b", json.dumps(2))
+        await backend.set("ns2:c", json.dumps(3))
+        result = await backend.keys()
+        assert sorted(result) == ["ns1:a", "ns1:b", "ns2:c"]
+
+    async def test_keys_pattern(self, tmp_db):
+        backend = _get_backend()
+        await backend.set("ns1:a", json.dumps(1))
+        await backend.set("ns1:b", json.dumps(2))
+        await backend.set("ns2:c", json.dumps(3))
+        result = await backend.keys("ns1:*")
+        assert sorted(result) == ["ns1:a", "ns1:b"]
+
+    async def test_keys_excludes_expired(self, tmp_db):
+        backend = _get_backend()
+        await backend.set("live", json.dumps(1))
+        await backend.set("dead", json.dumps(2), ttl=1)
+        # Manually expire
+        import aiosqlite
+        async with aiosqlite.connect(tmp_db) as db:
+            await db.execute(
+                "UPDATE kv_store SET expiry_at = ? WHERE ns_key = ?",
+                (time.time() - 10, "dead"),
+            )
+            await db.commit()
+        result = await backend.keys()
+        assert result == ["live"]
+
+
+# ============================================================================
 # TestKeyValueFallback — behavior when aiosqlite unavailable
 # ============================================================================
 
@@ -261,7 +419,7 @@ class TestKeyValueFallback:
 
     async def test_fallback_without_configure(self):
         """Without configure, uses in-memory store."""
-        assert _use_sqlite() is False
+        assert isinstance(_get_backend(), MemoryBackend)
         await key_value_set(key="k", value="v")
         result = await key_value_get(key="k")
         assert result.data == "v"
@@ -270,7 +428,7 @@ class TestKeyValueFallback:
         """When aiosqlite is not available, falls back to in-memory."""
         with patch("xml_pipeline.tools.keyvalue.AIOSQLITE_AVAILABLE", False):
             configure_keyvalue(db_path="/tmp/fake.db")
-            assert _use_sqlite() is False
+            assert isinstance(_get_backend(), MemoryBackend)
             await key_value_set(key="k", value="v")
             result = await key_value_get(key="k")
             assert result.data == "v"
