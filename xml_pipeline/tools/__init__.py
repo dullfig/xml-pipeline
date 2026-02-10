@@ -20,6 +20,11 @@ from .console import (
     get_console_backend, set_console_backend,
 )
 from .convert import xml_to_json, json_to_xml, xml_extract
+from .solver import (
+    solve, safe_solve, safe_simplify, safe_parse, parse,
+    SolveRequest, SolveResult, handle_solve,
+    SYMPY_AVAILABLE,
+)
 
 __all__ = [
     # Base
@@ -80,4 +85,13 @@ __all__ = [
     "xml_to_json",
     "json_to_xml",
     "xml_extract",
+    # Solver listener
+    "SolveRequest",
+    "SolveResult",
+    "handle_solve",
+    "safe_solve",
+    "safe_simplify",
+    "safe_parse",
+    "solve",
+    "SYMPY_AVAILABLE",
 ]

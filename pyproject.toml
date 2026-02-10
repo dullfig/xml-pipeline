@@ -83,6 +83,9 @@ search = ["duckduckgo-search>=6.0"] # Web search tool
 # Premium Librarian (codebase intelligence)
 librarian = ["gitpython>=3.1", "aiohttp>=3.9"]
 
+# Symbolic math (solver tool)
+solver = ["sympy>=1.12"]
+
 # WASM tool sandboxing
 wasm = ["wasmtime>=28"]
 
@@ -100,7 +103,7 @@ server = [
 llm = ["xml-pipeline[anthropic,openai]"]
 
 # All tools
-tools = ["xml-pipeline[redis,search,librarian]"]
+tools = ["xml-pipeline[redis,search,librarian,solver]"]
 
 # Everything (for local development)
 all = ["xml-pipeline[llm,tools,console,server,wasm]"]

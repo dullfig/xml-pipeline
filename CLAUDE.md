@@ -154,6 +154,7 @@ pytest tests/ -v -k "repair"              # Pattern match
 | convert | `convert.py` | Data format conversion |
 | librarian | `librarian.py` | Documentation lookup |
 | console | `console.py` | Console I/O — notify (fire-and-forget) and prompt (wait for input) |
+| solver | `solver.py` | Symbolic equation solving (safe Pratt parser + SymPy, no eval) |
 
 ## Additional Resources
 
