@@ -333,6 +333,7 @@ All bounded capabilities (tools and agents).
 - `peers:`: List of registered names (or gateway groups) this listener is allowed to address. Enforced by pump for agents.
 - `broadcast: true`: Opt-in flag allowing multiple listeners to share the exact same derived root tag (used for parallel gateways).
 - `timeout_seconds`: Handler execution timeout in seconds (default `30`). On timeout, `SystemError(code="timeout")` is sent back to the caller; the thread stays alive. Use higher values for LLM agents that make external API calls.
+- `handler_sha256`: Optional SHA-256 hex digest of the handler's module file. When present, the module's source bytes are hashed at import time and compared against this value. Mismatch raises `ValueError` at bootstrap — the organism will not start with tampered handler code. Absent or empty string skips verification (backward compatible).
 
 #### `gateways`
 Federation peers (trusted remote organisms).

@@ -7,12 +7,15 @@ Covers:
   - Trust model (auto-detection and explicit overrides)
   - SandboxRegistry management
   - Integration with StreamPump dispatch
+  - Handler module integrity verification (SHA-256)
 """
 
 import asyncio
+import hashlib
 import multiprocessing
 import pytest
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import patch
 
 from third_party.xmlable import xmlify
@@ -794,3 +797,119 @@ class TestHelpers:
     def test_respond_marker_is_string(self):
         """_RESPOND_MARKER is the expected sentinel string."""
         assert _RESPOND_MARKER == "__RESPOND__"
+
+
+# ============================================================================
+# 7. Handler module integrity verification (SHA-256)
+# ============================================================================
+
+class TestHandlerIntegrity:
+
+    def _hash_module(self, dotted_path: str) -> str:
+        """Compute SHA-256 hex digest for a module's source file."""
+        import importlib
+        mod_path, _ = dotted_path.rsplit(".", 1)
+        module = importlib.import_module(mod_path)
+        return hashlib.sha256(Path(module.__file__).read_bytes()).hexdigest()
+
+    def test_correct_hash_passes(self):
+        """Correct handler_sha256 passes verification silently."""
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+        handler_path = f"{__name__}.sandbox_echo_handler"
+        correct_hash = self._hash_module(handler_path)
+
+        lc = ConfigLoader._parse_listener({
+            "name": "integrity-ok",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": handler_path,
+            "description": "test",
+            "handler_sha256": correct_hash,
+        })
+        # Should not raise
+        ConfigLoader._resolve_imports(lc)
+        assert lc.handler is sandbox_echo_handler
+
+    def test_wrong_hash_raises(self):
+        """Wrong handler_sha256 raises ValueError with expected vs actual."""
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+        handler_path = f"{__name__}.sandbox_echo_handler"
+
+        lc = ConfigLoader._parse_listener({
+            "name": "integrity-bad",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": handler_path,
+            "description": "test",
+            "handler_sha256": "0" * 64,
+        })
+        with pytest.raises(ValueError, match="Handler integrity check failed"):
+            ConfigLoader._resolve_imports(lc)
+
+    def test_empty_hash_skips_verification(self):
+        """Empty handler_sha256 skips integrity check."""
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+        lc = ConfigLoader._parse_listener({
+            "name": "integrity-skip",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": f"{__name__}.sandbox_echo_handler",
+            "description": "test",
+        })
+        assert lc.handler_sha256 == ""
+        # Should not raise
+        ConfigLoader._resolve_imports(lc)
+        assert lc.handler is sandbox_echo_handler
+
+    def test_absent_hash_skips_verification(self):
+        """Missing handler_sha256 key in YAML defaults to empty string."""
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+        lc = ConfigLoader._parse_listener({
+            "name": "integrity-absent",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": f"{__name__}.sandbox_echo_handler",
+            "description": "test",
+            # no handler_sha256 key at all
+        })
+        assert lc.handler_sha256 == ""
+        ConfigLoader._resolve_imports(lc)
+
+    def test_hash_checks_handler_module_not_payload_module(self):
+        """Hash is computed from the handler's module, not the payload class module."""
+        from xml_pipeline.message_bus.config_loader import ConfigLoader
+
+        # Handler is in this test module, payload class is also in this module
+        # but if they were in different modules, the hash should be of the handler's module.
+        # We verify by computing the hash of the handler's module explicitly.
+        handler_path = f"{__name__}.sandbox_echo_handler"
+        handler_module_hash = self._hash_module(handler_path)
+
+        # Use a payload class from a different module
+        payload_path = "xml_pipeline.message_bus.message_state.HandlerResponse"
+        payload_module_hash = self._hash_module(payload_path)
+
+        # They should differ (different modules)
+        assert handler_module_hash != payload_module_hash
+
+        # The handler_sha256 should match the handler module, not payload module
+        lc = ConfigLoader._parse_listener({
+            "name": "integrity-target",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": handler_path,
+            "description": "test",
+            "handler_sha256": handler_module_hash,
+        })
+        # Should pass — hash matches handler's module
+        ConfigLoader._resolve_imports(lc)
+
+        # Using payload module's hash should fail
+        lc2 = ConfigLoader._parse_listener({
+            "name": "integrity-wrong-target",
+            "payload_class": f"{__name__}.SandboxInput",
+            "handler": handler_path,
+            "description": "test",
+            "handler_sha256": payload_module_hash,
+        })
+        with pytest.raises(ValueError, match="Handler integrity check failed"):
+            ConfigLoader._resolve_imports(lc2)

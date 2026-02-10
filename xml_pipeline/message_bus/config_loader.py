@@ -7,6 +7,7 @@ Python import paths to actual classes and functions.
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 from pathlib import Path
 from typing import List, Dict, Any
@@ -161,6 +162,7 @@ class ConfigLoader:
             prompt=raw.get("prompt", ""),
             timeout=float(raw.get("timeout_seconds", 30.0)),
             trusted=trusted,
+            handler_sha256=raw.get("handler_sha256", ""),
         )
 
     @classmethod
@@ -168,5 +170,21 @@ class ConfigLoader:
         mod, cls_name = lc.payload_class_path.rsplit(".", 1)
         lc.payload_class = getattr(importlib.import_module(mod), cls_name)
 
-        mod, fn_name = lc.handler_path.rsplit(".", 1)
-        lc.handler = getattr(importlib.import_module(mod), fn_name)
+        handler_mod_path, fn_name = lc.handler_path.rsplit(".", 1)
+        handler_module = importlib.import_module(handler_mod_path)
+        lc.handler = getattr(handler_module, fn_name)
+
+        if lc.handler_sha256:
+            module_file = getattr(handler_module, "__file__", None)
+            if module_file is None:
+                raise ValueError(
+                    f"handler_sha256 set for '{lc.name}' but handler module "
+                    f"'{handler_mod_path}' has no __file__ (built-in or frozen module)"
+                )
+            actual = hashlib.sha256(Path(module_file).read_bytes()).hexdigest()
+            if actual != lc.handler_sha256:
+                raise ValueError(
+                    f"Handler integrity check failed for '{lc.name}': "
+                    f"expected sha256={lc.handler_sha256}, "
+                    f"got sha256={actual}"
+                )

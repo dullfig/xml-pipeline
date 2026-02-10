@@ -28,6 +28,7 @@ class ListenerConfig:
     prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
     timeout: float = 30.0  # Handler execution timeout in seconds
     trusted: bool | None = None  # None = auto-detect (system/agent → trusted)
+    handler_sha256: str = ""  # Expected SHA-256 hex digest of handler module file
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
 
