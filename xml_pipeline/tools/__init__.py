@@ -13,6 +13,12 @@ from .shell import run_command, configure_allowed_commands, configure_blocked_co
 from .search import web_search, configure_search
 from .keyvalue import key_value_get, key_value_set, key_value_delete, configure_keyvalue, KVBackend, SqliteBackend, MemoryBackend
 from .librarian import librarian_store, librarian_get, librarian_query, librarian_search, configure_librarian
+from .console import (
+    console_notify, console_prompt,
+    ConsoleNotify, ConsolePrompt, ConsoleInput,
+    handle_console_notify, handle_console_prompt,
+    get_console_backend, set_console_backend,
+)
 from .convert import xml_to_json, json_to_xml, xml_extract
 
 __all__ = [
@@ -44,8 +50,18 @@ __all__ = [
     "SqliteBackend",
     "MemoryBackend",
     "configure_keyvalue",
+    # Console listener
+    "ConsoleNotify",
+    "ConsolePrompt",
+    "ConsoleInput",
+    "handle_console_notify",
+    "handle_console_prompt",
+    "get_console_backend",
+    "set_console_backend",
     # Tools
     "calculate",
+    "console_notify",
+    "console_prompt",
     "fetch_url",
     "read_file",
     "write_file",

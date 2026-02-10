@@ -153,6 +153,7 @@ pytest tests/ -v -k "repair"              # Pattern match
 | keyvalue | `keyvalue.py` | Key-value storage (SQLite/Redis) |
 | convert | `convert.py` | Data format conversion |
 | librarian | `librarian.py` | Documentation lookup |
+| console | `console.py` | Console I/O — notify (fire-and-forget) and prompt (wait for input) |
 
 ## Additional Resources
 
