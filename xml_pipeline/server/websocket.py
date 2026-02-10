@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 
 from xml_pipeline.server.models import (
     SubscribeRequest,
@@ -22,23 +25,103 @@ from xml_pipeline.server.models import (
 if TYPE_CHECKING:
     from xml_pipeline.server.state import ServerState
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Connection limits
+# ---------------------------------------------------------------------------
+
+MAX_CONNECTIONS = 50       # Total across both endpoints
+MAX_PER_IP = 10            # Per remote IP across both endpoints
+IDLE_TIMEOUT = 300.0       # 5 minutes with no client message → disconnect
+
+
+class ConnectionLimiter:
+    """Shared admission control for all WebSocket endpoints.
+
+    Tracks total connections and per-IP counts. Both ``ConnectionManager``
+    and ``MessageStreamManager`` register through this limiter so limits
+    are enforced globally.
+    """
+
+    def __init__(
+        self,
+        max_total: int = MAX_CONNECTIONS,
+        max_per_ip: int = MAX_PER_IP,
+    ) -> None:
+        self.max_total = max_total
+        self.max_per_ip = max_per_ip
+        self._connections: Set[WebSocket] = set()
+        self._ip_counts: Dict[str, int] = defaultdict(int)
+
+    def _client_ip(self, websocket: WebSocket) -> str:
+        """Extract remote IP from the WebSocket."""
+        if websocket.client:
+            return websocket.client.host
+        return "unknown"
+
+    def admit(self, websocket: WebSocket) -> Optional[str]:
+        """Check if a new connection should be admitted.
+
+        Returns None if OK, or an error reason string if rejected.
+        """
+        if len(self._connections) >= self.max_total:
+            return f"max connections reached ({self.max_total})"
+
+        ip = self._client_ip(websocket)
+        if self._ip_counts[ip] >= self.max_per_ip:
+            return f"per-IP limit reached ({self.max_per_ip})"
+
+        return None
+
+    def register(self, websocket: WebSocket) -> None:
+        """Track a newly accepted connection."""
+        self._connections.add(websocket)
+        ip = self._client_ip(websocket)
+        self._ip_counts[ip] += 1
+
+    def unregister(self, websocket: WebSocket) -> None:
+        """Remove a closed connection from tracking."""
+        self._connections.discard(websocket)
+        ip = self._client_ip(websocket)
+        self._ip_counts[ip] = max(0, self._ip_counts[ip] - 1)
+        if self._ip_counts[ip] == 0:
+            self._ip_counts.pop(ip, None)
+
+    @property
+    def total(self) -> int:
+        return len(self._connections)
+
 
 class ConnectionManager:
     """Manages WebSocket connections and subscriptions."""
 
-    def __init__(self) -> None:
+    def __init__(self, limiter: ConnectionLimiter) -> None:
         self.active_connections: Set[WebSocket] = set()
         self.subscriptions: Dict[WebSocket, SubscribeRequest] = {}
+        self._limiter = limiter
 
-    async def connect(self, websocket: WebSocket) -> None:
-        """Accept a new WebSocket connection."""
+    async def connect(self, websocket: WebSocket) -> bool:
+        """Accept a new WebSocket connection.
+
+        Returns True if admitted, False if rejected (connection closed).
+        """
+        reason = self._limiter.admit(websocket)
+        if reason:
+            logger.warning(f"WebSocket /ws rejected: {reason}")
+            await websocket.close(code=1013, reason=reason)
+            return False
         await websocket.accept()
         self.active_connections.add(websocket)
+        self._limiter.register(websocket)
         self.subscriptions[websocket] = SubscribeRequest()  # Default: all events
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove a WebSocket connection."""
-        self.active_connections.discard(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.discard(websocket)
+            self._limiter.unregister(websocket)
         self.subscriptions.pop(websocket, None)
 
     def set_subscription(self, websocket: WebSocket, sub: SubscribeRequest) -> None:
@@ -105,19 +188,32 @@ class ConnectionManager:
 class MessageStreamManager:
     """Manages WebSocket connections for /ws/messages endpoint."""
 
-    def __init__(self) -> None:
+    def __init__(self, limiter: ConnectionLimiter) -> None:
         self.active_connections: Set[WebSocket] = set()
         self.filters: Dict[WebSocket, Dict[str, Any]] = {}
+        self._limiter = limiter
 
-    async def connect(self, websocket: WebSocket) -> None:
-        """Accept a new WebSocket connection."""
+    async def connect(self, websocket: WebSocket) -> bool:
+        """Accept a new WebSocket connection.
+
+        Returns True if admitted, False if rejected (connection closed).
+        """
+        reason = self._limiter.admit(websocket)
+        if reason:
+            logger.warning(f"WebSocket /ws/messages rejected: {reason}")
+            await websocket.close(code=1013, reason=reason)
+            return False
         await websocket.accept()
         self.active_connections.add(websocket)
+        self._limiter.register(websocket)
         self.filters[websocket] = {}  # Default: all messages
+        return True
 
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove a WebSocket connection."""
-        self.active_connections.discard(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.discard(websocket)
+            self._limiter.unregister(websocket)
         self.filters.pop(websocket, None)
 
     def set_filter(self, websocket: WebSocket, filter_config: Dict[str, Any]) -> None:
@@ -172,8 +268,9 @@ class MessageStreamManager:
 def create_websocket_router(state: "ServerState") -> APIRouter:
     """Create WebSocket router with state dependency."""
     router = APIRouter()
-    manager = ConnectionManager()
-    message_manager = MessageStreamManager()
+    limiter = ConnectionLimiter()
+    manager = ConnectionManager(limiter)
+    message_manager = MessageStreamManager(limiter)
 
     # Subscribe state to WebSocket broadcasting
     async def on_state_event(event: Dict[str, Any]) -> None:
@@ -195,7 +292,8 @@ def create_websocket_router(state: "ServerState") -> APIRouter:
         On connect, sends full state snapshot. Then pushes events as they occur.
         Accepts commands: subscribe, inject.
         """
-        await manager.connect(websocket)
+        if not await manager.connect(websocket):
+            return
 
         try:
             # Send connected event with state snapshot
@@ -210,7 +308,13 @@ def create_websocket_router(state: "ServerState") -> APIRouter:
             # Listen for commands
             while True:
                 try:
-                    data = await websocket.receive_json()
+                    data = await asyncio.wait_for(
+                        websocket.receive_json(),
+                        timeout=IDLE_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.info("WebSocket /ws idle timeout — disconnecting")
+                    break
                 except Exception:
                     # Connection closed or invalid data
                     break
@@ -291,12 +395,19 @@ def create_websocket_router(state: "ServerState") -> APIRouter:
         Streams all messages flowing through the organism.
         Clients can filter by agents, threads, and payload types.
         """
-        await message_manager.connect(websocket)
+        if not await message_manager.connect(websocket):
+            return
 
         try:
             while True:
                 try:
-                    data = await websocket.receive_json()
+                    data = await asyncio.wait_for(
+                        websocket.receive_json(),
+                        timeout=IDLE_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.info("WebSocket /ws/messages idle timeout — disconnecting")
+                    break
                 except Exception:
                     break
 

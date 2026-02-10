@@ -180,11 +180,13 @@ Extracted `_is_dangerous_ip()` helper for comprehensive coverage.
 `GET,POST,PUT,DELETE`. Restricted headers to `Authorization,Content-Type`.
 Callers can still pass `cors_origins=["*"]` explicitly if needed.
 
-### [ ] 23. No WebSocket connection limits
-**File:** `server/websocket.py:30-42`
+### [x] 23. No WebSocket connection limits
+**File:** `server/websocket.py`
 **Issue:** Unlimited concurrent connections on the main bus WebSocket. FD exhaustion.
-**Fix:** Need `max_connections` with eviction + per-IP rate limit + idle timeout.
-(OOB server now has `max_queue=64` limit — #24 partially addresses this.)
+**Fix:** Added `ConnectionLimiter` shared across both `/ws` and `/ws/messages` endpoints.
+Global cap 50 connections, per-IP cap 10, 5-minute idle timeout. Rejected connections
+get close code 1013 ("Try Again Later"). Both `ConnectionManager` and
+`MessageStreamManager` register through the shared limiter.
 
 ### [x] 24. No message size limits (WebSocket + OOB)
 **File:** `oob/server.py:91`

@@ -901,10 +901,13 @@ class TestUsageAPI:
 class TestConnectionManager:
     """Test ConnectionManager subscription filtering logic."""
 
+    def _make_mgr(self):
+        from xml_pipeline.server.websocket import ConnectionManager, ConnectionLimiter
+        return ConnectionManager(ConnectionLimiter())
+
     def test_should_send_no_filters(self):
         """With no subscription filters, all events should be sent."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest()
@@ -914,8 +917,7 @@ class TestConnectionManager:
 
     def test_should_send_event_type_filter(self):
         """Filter by event type."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest(events=["message"])
@@ -925,8 +927,7 @@ class TestConnectionManager:
 
     def test_should_send_thread_filter(self):
         """Filter by thread ID."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest(threads=["thread-1"])
@@ -936,8 +937,7 @@ class TestConnectionManager:
 
     def test_should_send_agent_filter(self):
         """Filter by agent name."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest(agents=["greeter"])
@@ -947,8 +947,7 @@ class TestConnectionManager:
 
     def test_should_send_message_from_to_filter(self):
         """For message events, filter by from/to matching agents."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest(agents=["greeter"])
@@ -973,8 +972,7 @@ class TestConnectionManager:
 
     def test_should_send_payload_type_filter(self):
         """Filter by payload type."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.subscriptions[ws] = SubscribeRequest(payload_types=["Greeting"])
@@ -992,8 +990,7 @@ class TestConnectionManager:
     @pytest.mark.asyncio
     async def test_broadcast_to_matching(self):
         """Broadcast sends only to matching connections."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws1 = AsyncMock()
         ws2 = AsyncMock()
@@ -1009,8 +1006,7 @@ class TestConnectionManager:
     @pytest.mark.asyncio
     async def test_broadcast_cleans_disconnected(self):
         """Broadcast cleans up connections that raise exceptions."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = AsyncMock()
         ws.send_json.side_effect = Exception("disconnected")
@@ -1024,8 +1020,7 @@ class TestConnectionManager:
 
     def test_disconnect(self):
         """Disconnect removes connection from both sets."""
-        from xml_pipeline.server.websocket import ConnectionManager
-        mgr = ConnectionManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.active_connections.add(ws)
@@ -1044,10 +1039,13 @@ class TestConnectionManager:
 class TestMessageStreamManager:
     """Test MessageStreamManager filtering logic."""
 
+    def _make_mgr(self):
+        from xml_pipeline.server.websocket import MessageStreamManager, ConnectionLimiter
+        return MessageStreamManager(ConnectionLimiter())
+
     def test_should_send_no_filter(self):
         """With no filter, all messages should be sent."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.filters[ws] = {}
@@ -1056,8 +1054,7 @@ class TestMessageStreamManager:
 
     def test_filter_by_agents(self):
         """Filter messages by agent from/to."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.filters[ws] = {"agents": ["greeter"]}
@@ -1068,8 +1065,7 @@ class TestMessageStreamManager:
 
     def test_filter_by_threads(self):
         """Filter messages by thread ID."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.filters[ws] = {"threads": ["t1"]}
@@ -1079,8 +1075,7 @@ class TestMessageStreamManager:
 
     def test_filter_by_payload_types(self):
         """Filter messages by payload type."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.filters[ws] = {"payload_types": ["Greeting"]}
@@ -1091,8 +1086,7 @@ class TestMessageStreamManager:
     @pytest.mark.asyncio
     async def test_broadcast_message(self):
         """Broadcast sends to matching connections."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws1 = AsyncMock()
         ws2 = AsyncMock()
@@ -1108,8 +1102,7 @@ class TestMessageStreamManager:
     @pytest.mark.asyncio
     async def test_broadcast_cleans_disconnected(self):
         """Broadcast cleans up failed connections."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = AsyncMock()
         ws.send_json.side_effect = Exception("disconnected")
@@ -1122,8 +1115,7 @@ class TestMessageStreamManager:
 
     def test_disconnect(self):
         """Disconnect removes connection from both sets."""
-        from xml_pipeline.server.websocket import MessageStreamManager
-        mgr = MessageStreamManager()
+        mgr = self._make_mgr()
 
         ws = MagicMock()
         mgr.active_connections.add(ws)
