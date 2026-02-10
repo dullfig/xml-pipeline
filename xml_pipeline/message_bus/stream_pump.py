@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import AsyncIterable, Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -159,6 +160,10 @@ class StreamPump:
 
         # WASM registry (initialized in start() if tools declared)
         self._wasm_registry: Any = None
+
+        # Shell worker (OS-isolated execution via xp-exec)
+        self._shell_worker_id: Optional[str] = None
+        self._shell_config: Dict[str, Any] = {}
 
         # Shared backend for cross-process state
         self._shared_backend = None
@@ -837,6 +842,10 @@ class StreamPump:
         if self.config.peer_table_configs:
             self._register_config_peer_tables()
 
+        # --- 11. Shell worker (OS-isolated execution) ---
+        if self.config.shell_config.get("enabled") and sys.platform == "linux":
+            self._start_shell_worker()
+
         pump_logger.info(
             f"Organism '{self.config.name}' started: "
             f"{len(self.listeners)} listeners, root={root_uuid}"
@@ -1450,6 +1459,125 @@ class StreamPump:
         )
         await self.queue.put(state)
 
+    # ------------------------------------------------------------------
+    # Shell Worker
+    # ------------------------------------------------------------------
+
+    def _start_shell_worker(self) -> None:
+        """Start the shell worker process for OS-isolated execution."""
+        import os
+        from xml_pipeline.tools.shell_worker import shell_worker_main
+
+        shell_cfg = self.config.shell_config
+
+        # Build table_os_users mapping from peer table configs
+        table_os_users: Dict[str, str] = {}
+        for pt in self.config.peer_table_configs:
+            os_user = pt.get("os_user")
+            if os_user:
+                table_os_users[pt["name"]] = os_user
+
+        # Resolve TOTP secret
+        totp_secret = ""
+        totp_env = shell_cfg.get("totp_secret_env", "")
+        if totp_env:
+            totp_secret = os.environ.get(totp_env, "")
+        if not totp_secret:
+            # Auto-generate a TOTP secret for this session
+            from xml_pipeline.crypto.totp import generate_secret
+            totp_secret = generate_secret()
+
+        xp_exec_path = shell_cfg.get("xp_exec_path", "/usr/local/bin/xp-exec")
+
+        # Use a synthetic thread_id for the shell worker (system-level)
+        self._shell_worker_id = self._worker_registry.spawn(
+            thread_id="system.shell",
+            listener_name="system.shell",
+            target=shell_worker_main,
+            kwargs={
+                "totp_secret": totp_secret,
+                "xp_exec_path": xp_exec_path,
+            },
+        )
+
+        self._shell_config = {
+            "enabled": True,
+            "default_os_user": shell_cfg.get("default_os_user", ""),
+            "xp_exec_path": xp_exec_path,
+            "table_os_users": table_os_users,
+        }
+
+        pump_logger.info(
+            f"Shell worker started (worker_id={self._shell_worker_id[:8]}...)"
+        )
+
+    async def _shell_execute(
+        self,
+        command: str,
+        os_user: str,
+        timeout: int = 30,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a command via the shell worker process.
+
+        Sends a request to the worker's inbox and polls the outbox for
+        the matching response.
+
+        Args:
+            command: Command to execute
+            os_user: Target OS user for privilege isolation
+            timeout: Command timeout in seconds
+            cwd: Working directory (optional)
+            env: Environment variables (optional)
+
+        Returns:
+            Response dict with exit_code, stdout, stderr, timed_out, error
+        """
+        import uuid as _uuid
+
+        if not self._shell_worker_id:
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": "",
+                "timed_out": False,
+                "error": "Shell worker not running",
+            }
+
+        request_id = str(_uuid.uuid4())
+        request = {
+            "request_id": request_id,
+            "command": command,
+            "os_user": os_user,
+            "timeout": timeout,
+        }
+        if cwd:
+            request["cwd"] = cwd
+        if env:
+            request["env"] = env
+
+        # Send to worker
+        self._worker_registry.send(self._shell_worker_id, request)
+
+        # Poll for matching response
+        deadline = asyncio.get_event_loop().time() + timeout + 10
+        while asyncio.get_event_loop().time() < deadline:
+            messages = self._worker_registry.receive(self._shell_worker_id)
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("request_id") == request_id:
+                    return msg
+            await asyncio.sleep(0.1)
+
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": True,
+            "error": "Shell worker response timeout",
+        }
+
     async def shutdown(self) -> None:
         """Graceful shutdown — wait for queue to drain and close resources."""
         # Stop OOB server first
@@ -1473,6 +1601,10 @@ class StreamPump:
             from xml_pipeline.wasm import reset_wasm_registry
             reset_wasm_registry()
             self._wasm_registry = None
+
+        # Clear shell worker reference (process stopped by shutdown_all)
+        self._shell_worker_id = None
+        self._shell_config = {}
 
         # Stop all background workers
         if self._worker_registry:

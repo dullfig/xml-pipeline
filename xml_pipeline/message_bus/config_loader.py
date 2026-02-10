@@ -49,17 +49,21 @@ class ConfigLoader:
         for pt_raw in raw.get("peer_tables", []):
             name = pt_raw.get("name", "")
             parent = pt_raw.get("parent")
+            os_user = pt_raw.get("os_user")
             peers_dict: Dict[str, List[str]] = {}
             for entry in pt_raw.get("entries", []):
                 listener_name = entry.get("listener", "")
                 peer_list = entry.get("peers", [])
                 if listener_name:
                     peers_dict[listener_name] = peer_list
-            peer_table_configs.append({
+            pt_config: Dict[str, Any] = {
                 "name": name,
                 "parent": parent,
                 "peers": peers_dict,
-            })
+            }
+            if os_user is not None:
+                pt_config["os_user"] = os_user
+            peer_table_configs.append(pt_config)
 
         # Parse network port allocations
         network_ports: List[Dict[str, Any]] = []
@@ -86,6 +90,17 @@ class ConfigLoader:
                 "timeout_seconds": float(tool_raw.get("timeout_seconds", 5.0)),
             })
 
+        # Parse shell config
+        shell_config: Dict[str, Any] = {}
+        shell_raw = raw.get("shell", {})
+        if shell_raw:
+            shell_config = {
+                "enabled": shell_raw.get("enabled", False),
+                "default_os_user": shell_raw.get("default_os_user", ""),
+                "xp_exec_path": shell_raw.get("xp_exec_path", "/usr/local/bin/xp-exec"),
+                "totp_secret_env": shell_raw.get("totp_secret_env", ""),
+            }
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -107,6 +122,7 @@ class ConfigLoader:
             peer_table_configs=peer_table_configs,
             network_ports=network_ports,
             wasm_tool_configs=wasm_tool_configs,
+            shell_config=shell_config,
         )
 
         for entry in raw.get("listeners", []):

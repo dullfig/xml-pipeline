@@ -45,6 +45,12 @@ network:                                        # Network port allocations
       listener: webhook-receiver                # Owning listener
       protocol: tcp                             # Default: tcp
 
+shell:                                          # OS-isolated shell execution
+  enabled: true
+  default_os_user: xp-sandbox                   # Fallback OS user
+  xp_exec_path: /usr/local/bin/xp-exec          # Setuid helper binary
+  totp_secret_env: SHELL_TOTP_SECRET            # Optional; auto-generates if absent
+
 tools:                                          # WASM tool sandboxes
   - name: sentiment                             # Becomes listener: sentiment.analyze
     wasm_path: ./tools/sentiment.wasm
@@ -101,18 +107,21 @@ gateways:
 
 peer_tables:                                    # Privilege tiers (subtract-only)
   - name: admin
+    os_user: xp-admin                           # Shell commands run as this OS user
     entries:
       - listener: researcher
         peers: [calculator.add, calculator.multiply, local_summarizer, web_search]
 
   - name: operator
     parent: admin                               # Ceiling = admin's peer list
+    os_user: xp-operator
     entries:
       - listener: researcher
         peers: [calculator.add, calculator.multiply]
 
   - name: viewer
     parent: operator
+    os_user: xp-sandbox                         # Multiple tables can share an os_user
     entries:
       - listener: researcher
         peers: [calculator.add]
@@ -206,6 +215,46 @@ alloc = gate.request(9000, "127.0.0.1", "webhook-receiver", "tcp")
 gate.release(9000)
 ```
 
+#### `shell`
+OS-isolated shell execution via xp-exec (setuid helper binary). When enabled, commands execute as a dedicated OS user per peer table, enforced at the kernel level. Disabled by default. Linux only.
+
+- `enabled`: Enable shell execution (default `false`). Only effective on Linux.
+- `default_os_user`: Fallback OS user for threads without a peer table `os_user` mapping.
+- `xp_exec_path`: Path to the xp-exec setuid binary (default `/usr/local/bin/xp-exec`).
+- `totp_secret_env`: Environment variable holding the TOTP secret for xp-exec authentication. If empty, a per-session secret is auto-generated.
+
+```yaml
+shell:
+  enabled: true
+  default_os_user: xp-sandbox
+  xp_exec_path: /usr/local/bin/xp-exec
+  totp_secret_env: SHELL_TOTP_SECRET
+```
+
+Per-table OS user isolation is configured via `os_user` on peer table declarations:
+
+```yaml
+peer_tables:
+  - name: admin
+    os_user: xp-admin          # Commands from admin threads run as this user
+    entries:
+      - listener: researcher
+        peers: [calculator, shell]
+  - name: viewer
+    parent: admin
+    os_user: xp-sandbox        # Commands from viewer threads run as this user
+    entries:
+      - listener: researcher
+        peers: [calculator]
+```
+
+**Architecture:** The pump process never executes shell commands directly. Instead:
+1. A separate worker process (shell_worker) holds the TOTP secret with `PR_SET_DUMPABLE=0`
+2. Each command spawns a stateless xp-exec subprocess via JSON lines on stdin/stdout
+3. xp-exec verifies TOTP, drops privileges to the target OS user, then execs the command
+
+The `@tool` function (`run_command`) remains disabled as defense-in-depth. The listener handler (`handle_shell`) delegates to the worker process.
+
 #### `tools`
 WASM tool declarations. Foreign code (AssemblyScript, Rust, etc.) runs in WASM sandboxes as first-class listeners. Each exported function in a WASM module maps to one listener. Empty or absent `tools:` section = zero WASM tools (same pattern as `network:`).
 
@@ -268,6 +317,7 @@ Named peer tables for thread-scoped privilege enforcement, declared in YAML. Tab
 
 - `name`: Unique table name (e.g., `"admin"`, `"operator"`, `"viewer"`).
 - `parent`: Optional parent table name. If set, this table's ceiling is the parent's peer list instead of the YAML listener.peers. If omitted, ceiling comes from YAML.
+- `os_user`: Optional OS username for shell execution isolation. When `shell.enabled` is true, commands from threads using this table run as this OS user via xp-exec. If omitted, falls back to `shell.default_os_user`.
 - `entries`: List of `{ listener, peers }` mappings defining allowed peers for each listener in this table.
 
 **Ceiling enforcement:**

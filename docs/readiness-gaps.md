@@ -72,9 +72,9 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 | Tool | File | Status | Tests | Security Surface |
 |------|------|--------|-------|------------------|
 | calculate | `calculate.py` | READY | 35 | Low — pure math, simpleeval sandbox |
-| fetch | `fetch.py` | IMPL | 0 | **High** — SSRF protection, private IP blocking, URL validation |
-| files | `files.py` | IMPL | 0 | **High** — path traversal protection, sandbox allowlist, 10MB limit |
-| shell | `shell.py` | IMPL | 0 | **High** — dangerous command blocklist, shell operator filtering |
+| fetch | `fetch.py` | READY | 67 | httpx-based; SSRF protection, private IP blocking, URL validation; handler + payload classes |
+| files | `files.py` | READY | 17 | Disabled (`TOOL_ENABLED=False`); path traversal blocking, sandbox enforcement tested |
+| shell | `shell.py` | READY | 56 | OS-isolated via xp-exec worker; disabled @tool (defense-in-depth); handler + payload classes (ShellCommand/ShellResult); 39 validation + 17 handler/payload tests |
 | search | `search.py` | READY | 18 | Medium — 3 backends (SerpAPI, Google, Bing), all mocked |
 | convert | `convert.py` | READY | 43 | Medium — input size limit (1MB), tag name validation added |
 | librarian | `librarian.py` | READY | 31 | Medium — XQuery/Lucene injection fixed, path traversal blocked |
@@ -119,10 +119,10 @@ Systematic audit of what's implemented, tested, stubbed, or missing vs what the 
 
 ## Priority Order (Suggested)
 
-### P0 — Security-Critical (untested code that handles hostile input)
-1. Tests for `fetch.py` (SSRF protection, private IP blocking)
-2. Tests for `shell.py` (command blocklist, shell operator filtering)
-3. Tests for `files.py` (path traversal, sandbox enforcement)
+### P0 — Security-Critical (untested code that handles hostile input) — DONE
+1. ~~Tests for `fetch.py`~~ — 67 tests: URL validation, private IP, SSRF, httpx tool, handler, roundtrip
+2. ~~Tests for `shell.py`~~ — 56 tests: blocklist, operator filtering, payloads, handler, OS user resolution, xp-exec worker
+3. ~~Tests for `files.py`~~ — 17 tests: traversal blocking, sandbox enforcement, disabled gate
 
 ### P1 — Honesty (fix doc/code mismatches) — DONE
 4. ~~Fix docs: pipeline is unified, not per-listener~~ — annotated in core-principles, message-pump

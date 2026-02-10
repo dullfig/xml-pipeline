@@ -148,7 +148,7 @@ pytest tests/ -v -k "repair"              # Pattern match
 | calculate | `calculate.py` | Math expression evaluation (also a listener) |
 | fetch | `fetch.py` | HTTP requests |
 | files | `files.py` | File system operations (disabled) |
-| shell | `shell.py` | Shell command execution (disabled) |
+| shell | `shell.py` | Shell command execution (OS-isolated via xp-exec; @tool disabled, handler active) |
 | search | `search.py` | Web search (DuckDuckGo) |
 | keyvalue | `keyvalue.py` | Key-value storage (SQLite/Redis) |
 | convert | `convert.py` | Data format conversion |

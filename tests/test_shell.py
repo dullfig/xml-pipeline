@@ -1,8 +1,11 @@
-"""Tests for shell tool security validation.
+"""Tests for shell tool security validation, payload classes, and handler.
 
 Tests the command validation, blocklist enforcement, operator filtering,
-and security gate in xml_pipeline/tools/shell.py.
+security gate, @xmlify payload round-trips, and handle_shell handler.
 """
+
+import sys
+from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
@@ -14,10 +17,15 @@ from xml_pipeline.tools.shell import (
     TOOL_ENABLED,
     _DISABLED_MSG,
     _validate_command,
+    _resolve_os_user,
     configure_allowed_commands,
     configure_blocked_commands,
     run_command,
+    ShellCommand,
+    ShellResult,
+    handle_shell,
 )
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -200,3 +208,268 @@ class TestAllowlistMode:
         error = _validate_command("rm -rf /")
         assert error is not None
         assert "allowlist" in error.lower()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestShellPayloadClasses — @xmlify round-trip
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestShellPayloadClasses:
+    """ShellCommand and ShellResult xmlify round-trip."""
+
+    def test_shell_command_has_xsd(self) -> None:
+        assert hasattr(ShellCommand, "xsd")
+        xsd = ShellCommand.xsd()
+        assert xsd is not None
+
+    def test_shell_result_has_xsd(self) -> None:
+        assert hasattr(ShellResult, "xsd")
+        xsd = ShellResult.xsd()
+        assert xsd is not None
+
+    def test_shell_command_defaults(self) -> None:
+        cmd = ShellCommand(command="ls")
+        assert cmd.timeout == 30
+        assert cmd.cwd == ""
+
+    def test_shell_result_defaults(self) -> None:
+        res = ShellResult(command="ls", exit_code=0, stdout="", stderr="")
+        assert res.timed_out == 0
+        assert res.error == ""
+
+    def test_shell_command_roundtrip(self) -> None:
+        """ShellCommand survives xml_value -> parse_element."""
+        from lxml import etree
+        from third_party.xmlable import parse_element
+
+        cmd = ShellCommand(command="echo hello", timeout=60, cwd="/tmp")
+        tree = cmd.xml_value("ShellCommand")
+        parsed = parse_element(ShellCommand, tree)
+        assert parsed.command == "echo hello"
+        assert parsed.timeout == 60
+        assert parsed.cwd == "/tmp"
+
+    def test_shell_result_roundtrip(self) -> None:
+        from lxml import etree
+        from third_party.xmlable import parse_element
+
+        res = ShellResult(
+            command="ls", exit_code=0, stdout="file.txt\n",
+            stderr="", timed_out=0, error="",
+        )
+        tree = res.xml_value("ShellResult")
+        parsed = parse_element(ShellResult, tree)
+        assert parsed.command == "ls"
+        assert parsed.exit_code == 0
+        assert parsed.stdout == "file.txt\n"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestResolveOsUser
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestResolveOsUser:
+    """_resolve_os_user resolves OS user from peer table config."""
+
+    def _make_metadata(self, thread_id: str = "test-thread") -> HandlerMetadata:
+        return HandlerMetadata(
+            thread_id=thread_id,
+            from_id="caller",
+            own_name=None,
+            is_self_call=False,
+            usage_instructions="",
+            todo_nudge="",
+        )
+
+    def test_no_pump_returns_none(self) -> None:
+        with patch(
+            "xml_pipeline.message_bus.singleton.get_stream_pump",
+            side_effect=RuntimeError("no pump"),
+        ):
+            assert _resolve_os_user(self._make_metadata()) is None
+
+    def test_no_shell_config_returns_none(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_config = {}
+        with patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            assert _resolve_os_user(self._make_metadata()) is None
+
+    def test_table_lookup(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_config = {
+            "table_os_users": {"premium": "xp-premium"},
+            "default_os_user": "xp-default",
+        }
+        with patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump), \
+             patch("xml_pipeline.message_bus.thread_registry.get_registry") as mock_reg:
+            mock_reg.return_value.get_table_for_thread.return_value = "premium"
+            result = _resolve_os_user(self._make_metadata())
+        assert result == "xp-premium"
+
+    def test_default_fallback(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_config = {
+            "table_os_users": {},
+            "default_os_user": "xp-default",
+        }
+        with patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump), \
+             patch("xml_pipeline.message_bus.thread_registry.get_registry") as mock_reg:
+            mock_reg.return_value.get_table_for_thread.return_value = None
+            result = _resolve_os_user(self._make_metadata())
+        assert result == "xp-default"
+
+    def test_table_without_os_user_falls_to_default(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_config = {
+            "table_os_users": {"premium": "xp-premium"},
+            "default_os_user": "xp-default",
+        }
+        with patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump), \
+             patch("xml_pipeline.message_bus.thread_registry.get_registry") as mock_reg:
+            mock_reg.return_value.get_table_for_thread.return_value = "basic"
+            result = _resolve_os_user(self._make_metadata())
+        assert result == "xp-default"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestHandleShell — handler tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestHandleShell:
+    """handle_shell handler tests."""
+
+    def _make_metadata(self) -> HandlerMetadata:
+        return HandlerMetadata(
+            thread_id="test-thread",
+            from_id="caller",
+            own_name=None,
+            is_self_call=False,
+            usage_instructions="",
+            todo_nudge="",
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_linux_returns_error(self) -> None:
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            resp = await handle_shell(
+                ShellCommand(command="ls"), self._make_metadata()
+            )
+        assert isinstance(resp, HandlerResponse)
+        assert resp.is_response is True
+        assert isinstance(resp.payload, ShellResult)
+        assert "Linux" in resp.payload.error
+
+    @pytest.mark.asyncio
+    async def test_no_os_user_returns_error(self) -> None:
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value=None):
+            mock_sys.platform = "linux"
+            resp = await handle_shell(
+                ShellCommand(command="ls"), self._make_metadata()
+            )
+        assert "No OS user" in resp.payload.error
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_pump(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_execute = AsyncMock(return_value={
+            "exit_code": 0,
+            "stdout": "file.txt\n",
+            "stderr": "",
+            "timed_out": False,
+            "error": "",
+        })
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value="xp-sandbox"), \
+             patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            mock_sys.platform = "linux"
+            resp = await handle_shell(
+                ShellCommand(command="ls -la", timeout=60), self._make_metadata()
+            )
+
+        assert resp.payload.exit_code == 0
+        assert resp.payload.stdout == "file.txt\n"
+        mock_pump._shell_execute.assert_awaited_once_with(
+            command="ls -la",
+            os_user="xp-sandbox",
+            timeout=60,
+            cwd=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_worker_failure_returns_error(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_execute = AsyncMock(
+            side_effect=RuntimeError("worker died")
+        )
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value="xp-sandbox"), \
+             patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            mock_sys.platform = "linux"
+            resp = await handle_shell(
+                ShellCommand(command="ls"), self._make_metadata()
+            )
+        assert "worker died" in resp.payload.error
+
+    @pytest.mark.asyncio
+    async def test_always_responds(self) -> None:
+        """Handler always uses .respond() (never forwards)."""
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            resp = await handle_shell(
+                ShellCommand(command="ls"), self._make_metadata()
+            )
+        assert resp.is_response is True
+
+    @pytest.mark.asyncio
+    async def test_timed_out_mapped(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_execute = AsyncMock(return_value={
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": "",
+            "timed_out": True,
+            "error": "",
+        })
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value="u"), \
+             patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            mock_sys.platform = "linux"
+            resp = await handle_shell(
+                ShellCommand(command="sleep 999"), self._make_metadata()
+            )
+        assert resp.payload.timed_out == 1
+
+    @pytest.mark.asyncio
+    async def test_cwd_passed(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_execute = AsyncMock(return_value={
+            "exit_code": 0, "stdout": "", "stderr": "",
+            "timed_out": False, "error": "",
+        })
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value="u"), \
+             patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            mock_sys.platform = "linux"
+            await handle_shell(
+                ShellCommand(command="ls", cwd="/tmp"), self._make_metadata()
+            )
+        mock_pump._shell_execute.assert_awaited_once()
+        assert mock_pump._shell_execute.call_args[1]["cwd"] == "/tmp"
+
+    @pytest.mark.asyncio
+    async def test_empty_cwd_passed_as_none(self) -> None:
+        mock_pump = MagicMock()
+        mock_pump._shell_execute = AsyncMock(return_value={
+            "exit_code": 0, "stdout": "", "stderr": "",
+            "timed_out": False, "error": "",
+        })
+        with patch("xml_pipeline.tools.shell.sys") as mock_sys, \
+             patch("xml_pipeline.tools.shell._resolve_os_user", return_value="u"), \
+             patch("xml_pipeline.message_bus.singleton.get_stream_pump", return_value=mock_pump):
+            mock_sys.platform = "linux"
+            await handle_shell(
+                ShellCommand(command="ls", cwd=""), self._make_metadata()
+            )
+        assert mock_pump._shell_execute.call_args[1]["cwd"] is None

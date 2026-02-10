@@ -77,6 +77,10 @@ class OrganismConfig:
     #         "capabilities": list, "memory_limit_mb": int, "timeout_seconds": float}
     wasm_tool_configs: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Shell execution config from YAML
+    # {"enabled": bool, "default_os_user": str, "xp_exec_path": str, "totp_secret_env": str}
+    shell_config: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class Listener:

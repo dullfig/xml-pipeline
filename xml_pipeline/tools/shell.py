@@ -1,18 +1,26 @@
 """
-Shell tool - sandboxed command execution.
+Shell tool - OS-isolated command execution.
 
-Provides controlled command execution with security restrictions.
+Provides controlled command execution via xp-exec (setuid helper binary)
+that drops privileges to a per-peer-table OS user before executing.
 
-DISABLED: This tool is disabled pending security audit. All @tool functions
-return an error immediately. Validation logic remains testable.
-See docs/readiness-gaps.md for details.
+The @tool functions remain disabled (defense-in-depth). The handler
+(handle_shell) delegates to the shell worker process which communicates
+with xp-exec.
+
+Note: Do NOT use `from __future__ import annotations` here — it breaks
+xmlable's type introspection on @xmlify dataclasses.
 """
-
-from __future__ import annotations
 
 import asyncio
 import shlex
-from typing import Optional, List
+import sys
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+
+from third_party.xmlable import xmlify
+
+from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 
 from .base import tool, ToolResult
 
@@ -182,3 +190,129 @@ async def run_command(
         return ToolResult(success=False, error=f"Permission denied: {args[0]}")
     except Exception as e:
         return ToolResult(success=False, error=f"Execution error: {e}")
+
+
+# ── Payload classes (for listener mode) ─────────────────────────────────
+
+
+@xmlify
+@dataclass
+class ShellCommand:
+    """Request to execute a shell command via OS-isolated xp-exec."""
+    command: str
+    timeout: int = 30
+    cwd: str = ""
+
+
+@xmlify
+@dataclass
+class ShellResult:
+    """Result of a shell command execution."""
+    command: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    timed_out: int = 0   # 0/1 (xmlify-safe bool)
+    error: str = ""
+
+
+# ── OS user resolution ──────────────────────────────────────────────────
+
+
+def _resolve_os_user(metadata: HandlerMetadata) -> Optional[str]:
+    """
+    Resolve the OS user for this thread from the peer table config.
+
+    Looks up the thread's peer table → os_user mapping from the pump's
+    shell config. Falls back to default_os_user if no table mapping.
+    Returns None if shell is not configured.
+    """
+    try:
+        from xml_pipeline.message_bus.singleton import get_stream_pump
+        pump = get_stream_pump()
+    except Exception:
+        return None
+
+    if not pump or not pump._shell_config:
+        return None
+
+    shell_cfg = pump._shell_config
+    table_os_users: Dict[str, str] = shell_cfg.get("table_os_users", {})
+
+    # Resolve thread's peer table
+    from xml_pipeline.message_bus.thread_registry import get_registry
+    registry = get_registry()
+    table_name = registry.get_table_for_thread(metadata.thread_id)
+
+    if table_name and table_name in table_os_users:
+        return table_os_users[table_name]
+
+    return shell_cfg.get("default_os_user") or None
+
+
+# ── Handler (listener mode) ─────────────────────────────────────────────
+
+
+async def handle_shell(
+    payload: ShellCommand, metadata: HandlerMetadata
+) -> HandlerResponse:
+    """Handler for the shell listener — delegates to shell worker via pump."""
+    # Linux-only gate
+    if sys.platform != "linux":
+        return HandlerResponse.respond(
+            payload=ShellResult(
+                command=payload.command,
+                exit_code=-1,
+                stdout="",
+                stderr="",
+                error="Shell execution requires Linux (OS-level isolation via xp-exec)",
+            )
+        )
+
+    # Resolve OS user
+    os_user = _resolve_os_user(metadata)
+    if not os_user:
+        return HandlerResponse.respond(
+            payload=ShellResult(
+                command=payload.command,
+                exit_code=-1,
+                stdout="",
+                stderr="",
+                error="No OS user configured for this thread's peer table",
+            )
+        )
+
+    # Delegate to pump's shell worker
+    try:
+        from xml_pipeline.message_bus.singleton import get_stream_pump
+        pump = get_stream_pump()
+        if not pump:
+            raise RuntimeError("No pump available")
+
+        result = await pump._shell_execute(
+            command=payload.command,
+            os_user=os_user,
+            timeout=payload.timeout,
+            cwd=payload.cwd or None,
+        )
+
+        return HandlerResponse.respond(
+            payload=ShellResult(
+                command=payload.command,
+                exit_code=result.get("exit_code", -1),
+                stdout=result.get("stdout", ""),
+                stderr=result.get("stderr", ""),
+                timed_out=1 if result.get("timed_out", False) else 0,
+                error=result.get("error", ""),
+            )
+        )
+    except Exception as e:
+        return HandlerResponse.respond(
+            payload=ShellResult(
+                command=payload.command,
+                exit_code=-1,
+                stdout="",
+                stderr="",
+                error=f"Shell execution failed: {e}",
+            )
+        )
