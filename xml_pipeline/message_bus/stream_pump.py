@@ -109,8 +109,8 @@ class StreamPump:
         self.config = config
         self.config_path = config_path  # Store path for hot-reload
 
-        # Message queue feeds the stream
-        self.queue: asyncio.Queue[MessageState] = asyncio.Queue()
+        # Message queue feeds the stream (bounded to prevent OOM under load)
+        self.queue: asyncio.Queue[MessageState] = asyncio.Queue(maxsize=10_000)
 
         # Routing table
         self.routing_table: Dict[str, List[Listener]] = {}
@@ -125,6 +125,11 @@ class StreamPump:
                 pump_logger.info(f"Identity loaded: {config.identity_path}")
             except Exception as e:
                 pump_logger.warning(f"Failed to load identity: {e}")
+        else:
+            pump_logger.warning(
+                "No identity_path configured — envelope signing and "
+                "signature verification are DISABLED"
+            )
 
         # Generic listeners (accept any payload type)
         # Used for ephemeral orchestration handlers (sequences, buffers)
@@ -1231,48 +1236,60 @@ class StreamPump:
                     error=str(exc),
                 )
 
+    _ENVELOPE_NS = "https://xml-pipeline.org/ns/envelope/v1"
+    _ENVELOPE_NSMAP = {None: _ENVELOPE_NS}
+
     def _wrap_in_envelope(self, payload: Any, from_id: str, to_id: str, thread_id: str) -> bytes:
         """Wrap a dataclass payload in a message envelope, optionally signed."""
-        # Serialize payload to XML
+        from xml_pipeline.message_bus.envelope import ENVELOPE_NAMESPACE
+
+        ns = self._ENVELOPE_NS
+
+        # --- Build payload element ---
         if hasattr(payload, 'to_xml'):
             # SystemError and similar have manual to_xml()
             payload_str = payload.to_xml()
+            _secure = etree.XMLParser(resolve_entities=False, no_network=True)
+            payload_elem = etree.fromstring(payload_str.encode('utf-8'), parser=_secure)
         elif hasattr(payload, 'xml_value'):
             # @xmlify dataclasses
             payload_class_name = type(payload).__name__
-            payload_tree = payload.xml_value(payload_class_name)
-            payload_str = etree.tostring(payload_tree, encoding='unicode')
+            payload_elem = payload.xml_value(payload_class_name).getroot()
         else:
-            # Fallback for non-xmlify classes
+            # Fallback for non-xmlify classes — safe text escaping via lxml
             payload_class_name = type(payload).__name__
-            payload_str = f"<{payload_class_name}>{payload}</{payload_class_name}>"
+            payload_elem = etree.Element(payload_class_name)
+            payload_elem.text = str(payload)
 
-        # Add xmlns="" to keep payload out of envelope namespace
-        if 'xmlns=' not in payload_str:
-            idx = payload_str.index('>')
-            payload_str = payload_str[:idx] + ' xmlns=""' + payload_str[idx:]
+        # Ensure payload is in the empty namespace (not the envelope namespace)
+        if payload_elem.nsmap.get(None) is None and not payload_elem.get("xmlns"):
+            payload_elem.set("xmlns", "")
 
-        envelope_str = f"""<message xmlns="https://xml-pipeline.org/ns/envelope/v1">
-  <meta>
-    <from>{from_id}</from>
-    <to>{to_id}</to>
-    <thread>{thread_id}</thread>
-  </meta>
-  {payload_str}
-</message>"""
+        # --- Build envelope using element constructors (no f-string injection) ---
+        message = etree.Element(f"{{{ns}}}message", nsmap=self._ENVELOPE_NSMAP)
+
+        meta = etree.SubElement(message, f"{{{ns}}}meta")
+
+        from_elem = etree.SubElement(meta, f"{{{ns}}}from")
+        from_elem.text = from_id  # lxml auto-escapes <, >, &
+
+        to_elem = etree.SubElement(meta, f"{{{ns}}}to")
+        to_elem.text = to_id
+
+        thread_elem = etree.SubElement(meta, f"{{{ns}}}thread")
+        thread_elem.text = thread_id
+
+        message.append(payload_elem)
 
         # Sign if identity is configured
         if self.identity is not None:
             try:
                 from xml_pipeline.crypto.signing import sign_envelope
-                envelope_tree = etree.fromstring(envelope_str.encode('utf-8'))
-                signed_tree = sign_envelope(envelope_tree, self.identity, in_place=True)
-                return etree.tostring(signed_tree, encoding='utf-8', xml_declaration=True)
+                message = sign_envelope(message, self.identity, in_place=True)
             except Exception as e:
                 pump_logger.warning(f"Failed to sign envelope: {e}")
-                # Fall through to unsigned
 
-        return envelope_str.encode('utf-8')
+        return etree.tostring(message, encoding='utf-8', xml_declaration=True)
 
     async def _reinject_responses(self, state: MessageState) -> None:
         """Push handler responses back into the queue for next iteration."""
@@ -1643,7 +1660,13 @@ class StreamPump:
             self._oob_server = None
 
         self._running = False
-        await self.queue.join()
+        try:
+            await asyncio.wait_for(self.queue.join(), timeout=30.0)
+        except asyncio.TimeoutError:
+            pump_logger.warning(
+                "Queue drain timed out after 30s during shutdown "
+                f"({self.queue.qsize()} messages remaining)"
+            )
 
         # Release port gate
         if self._port_gate:

@@ -148,8 +148,16 @@ async def handle_console_prompt(
     payload: ConsolePrompt, metadata: HandlerMetadata
 ) -> HandlerResponse:
     """Handler for console.prompt — waits for input, responds to caller."""
+    import logging as _log
+    _log.getLogger(__name__).info(
+        "Console prompt from=%s source=%s text=%r",
+        metadata.from_id, payload.source, payload.text[:200],
+    )
+    # Use the authenticated caller identity as the display source,
+    # not the untrusted payload.source field (prevents spoofing)
+    display_source = metadata.from_id or payload.source
     backend = get_console_backend()
-    user_input = await backend.prompt(payload.source, payload.text)
+    user_input = await backend.prompt(display_source, payload.text)
     return HandlerResponse.respond(
         payload=ConsoleInput(source=payload.source, text=user_input),
     )

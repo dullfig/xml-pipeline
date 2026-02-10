@@ -75,7 +75,9 @@ def build_envelope(
     # Add payload
     if isinstance(payload, bytes):
         # Parse payload bytes
-        parser = etree.XMLParser(recover=True)
+        parser = etree.XMLParser(
+            recover=True, resolve_entities=False, no_network=True,
+        )
         payload_elem = etree.fromstring(payload, parser=parser)
     else:
         payload_elem = payload

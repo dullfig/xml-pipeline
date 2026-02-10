@@ -15,6 +15,9 @@ All backends support:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import os
 import pickle
 from abc import abstractmethod
 from dataclasses import dataclass
@@ -203,18 +206,40 @@ class SharedBackend(Protocol):
 
 
 # =============================================================================
-# Serialization Helpers
+# Serialization Helpers (HMAC-protected pickle)
 # =============================================================================
+
+# Per-process secret key for HMAC — ensures pickle payloads from external
+# sources (e.g. a compromised Redis) cannot be deserialized without the key.
+_PICKLE_HMAC_KEY: bytes = os.urandom(32)
+
+
+def _compute_hmac(data: bytes) -> bytes:
+    """Compute HMAC-SHA256 over pickle data."""
+    return hmac.new(_PICKLE_HMAC_KEY, data, hashlib.sha256).digest()
 
 
 def serialize_slot(slot: Any) -> bytes:
-    """Serialize a BufferSlot to bytes using pickle."""
-    return pickle.dumps(slot)
+    """Serialize a BufferSlot to HMAC-protected pickle bytes."""
+    payload = pickle.dumps(slot, protocol=pickle.HIGHEST_PROTOCOL)
+    mac = _compute_hmac(payload)
+    # Format: 32-byte HMAC + pickle payload
+    return mac + payload
 
 
 def deserialize_slot(data: bytes) -> Any:
-    """Deserialize bytes back to a BufferSlot."""
-    return pickle.loads(data)
+    """Deserialize HMAC-protected pickle bytes back to a BufferSlot.
+
+    Raises ValueError if HMAC verification fails (tampered data).
+    """
+    if len(data) < 32:
+        raise ValueError("Slot data too short (missing HMAC)")
+    stored_mac = data[:32]
+    payload = data[32:]
+    expected_mac = _compute_hmac(payload)
+    if not hmac.compare_digest(stored_mac, expected_mac):
+        raise ValueError("Slot HMAC verification failed — data may be tampered")
+    return pickle.loads(payload)
 
 
 # =============================================================================

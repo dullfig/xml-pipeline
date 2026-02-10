@@ -25,6 +25,18 @@ PR_SET_DUMPABLE = 4
 MAX_OUTPUT_SIZE = 1024 * 1024  # 1 MB
 MAX_TIMEOUT = 300
 
+# Environment variables that must never be overridden by untrusted callers.
+# These can influence dynamic linking, library loading, or privilege escalation.
+BLOCKED_ENV_VARS = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+    "PATH", "HOME", "USER", "SHELL", "LOGNAME",
+    "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
+    "NODE_OPTIONS", "NODE_PATH",
+    "BASH_ENV", "ENV", "CDPATH", "GLOBIGNORE",
+    "IFS", "SHELLOPTS", "BASHOPTS",
+})
+
 
 def _set_undumpable() -> None:
     """Block /proc/pid/mem reads on Linux via PR_SET_DUMPABLE=0."""
@@ -156,7 +168,15 @@ def shell_worker_main(
         os_user = request.get("os_user", "")
         timeout = min(max(1, request.get("timeout", 30)), MAX_TIMEOUT)
         cwd = request.get("cwd")
-        env = request.get("env")
+        raw_env = request.get("env")
+
+        # Sanitize env: strip blocked variables that could escalate privileges
+        env = None
+        if raw_env and isinstance(raw_env, dict):
+            env = {
+                k: v for k, v in raw_env.items()
+                if k.upper() not in BLOCKED_ENV_VARS
+            }
 
         if not command:
             outbox.put({

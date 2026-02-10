@@ -17,9 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import os
 import re
 from typing import Optional
+
+_tools_logger = logging.getLogger(__name__)
 
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
 from xml_pipeline.tools.keyvalue import KVBackend, MemoryBackend
@@ -134,13 +137,14 @@ async def handle_workspace_read(
             ),
         )
     except Exception as exc:
+        _tools_logger.exception("Workspace read failed for '%s'", payload.tool_name)
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="read-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
-                error=str(exc),
+                error=f"Read failed: {type(exc).__name__}",
                 iteration=payload.iteration,
                 phase=payload.phase,
             ),
@@ -188,13 +192,14 @@ async def handle_workspace_write(
             ),
         )
     except Exception as exc:
+        _tools_logger.exception("Workspace write failed for '%s'", payload.tool_name)
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="write-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
-                error=str(exc),
+                error=f"Write failed: {type(exc).__name__}",
                 iteration=payload.iteration,
                 phase=payload.phase,
             ),
@@ -285,13 +290,14 @@ async def handle_compile(
             ),
         )
     except Exception as exc:
+        _tools_logger.exception("Compilation failed for '%s'", payload.tool_name)
         return HandlerResponse.respond(
             payload=SwarmMessage(
                 role="compile-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
-                error=str(exc),
+                error=f"Compilation failed: {type(exc).__name__}",
                 iteration=payload.iteration,
                 phase=payload.phase,
             ),

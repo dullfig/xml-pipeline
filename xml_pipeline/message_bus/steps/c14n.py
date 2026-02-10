@@ -41,7 +41,10 @@ async def c14n_step(state: MessageState) -> MessageState:
 
         # Re-parse the canonical bytes to get a clean tree (prefixes normalized, etc.)
         # This ensures downstream steps see a consistent document
-        clean_tree = etree.fromstring(c14n_bytes)
+        _secure_parser = etree.XMLParser(
+            resolve_entities=False, no_network=True, huge_tree=False,
+        )
+        clean_tree = etree.fromstring(c14n_bytes, parser=_secure_parser)
 
         state.envelope_tree = clean_tree
         # raw_bytes already cleared by repair_step

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -68,6 +70,12 @@ class OOBServer:
         self._clients: set[Any] = set()
         self._subscriptions: dict[str, Subscription] = {}
         self._authenticated: set[int] = set()  # id(websocket) for TOTP-authenticated connections
+        self._auth_lock = asyncio.Lock()  # Serializes TOTP check-and-set
+
+        # TOTP brute-force protection: track failed attempts per remote address
+        self._totp_failures: dict[str, list[float]] = defaultdict(list)
+        self._TOTP_MAX_FAILURES = 5  # Max failures per window
+        self._TOTP_WINDOW_SECONDS = 300.0  # 5-minute window
 
     async def start(self) -> None:
         """Start the OOB WebSocket server."""
@@ -84,6 +92,8 @@ class OOBServer:
             self._connection_handler,
             self.bind,
             self.port,
+            max_size=1_048_576,  # 1 MB max message size
+            max_queue=64,  # Limit pending messages per connection
         )
 
         # Subscribe to pump events for push delivery
@@ -128,23 +138,57 @@ class OOBServer:
 
                 # TOTP gate: first message must be totp-auth when secret is set
                 if self.totp_secret and id(websocket) not in self._authenticated:
-                    totp_ok = self._check_totp_auth(raw_message, websocket)
-                    if totp_ok:
-                        from xml_pipeline.oob.protocol import build_ack
-                        await websocket.send(build_ack("", "TOTP authenticated"))
-                        continue
-                    else:
-                        error_response = build_error("", "AUTH_REQUIRED", "TOTP authentication required")
-                        await websocket.send(error_response)
-                        await websocket.close()
-                        return
+                    async with self._auth_lock:
+                        # Re-check after acquiring lock (another coroutine may have authed)
+                        if id(websocket) in self._authenticated:
+                            pass  # Already authed — fall through to dispatch
+                        else:
+                            # Rate-limit TOTP attempts per remote address
+                            remote_key = str(
+                                websocket.remote_address
+                                if hasattr(websocket, "remote_address")
+                                else "unknown"
+                            )
+                            now = time.monotonic()
+                            # Prune old failures outside the window
+                            self._totp_failures[remote_key] = [
+                                t for t in self._totp_failures[remote_key]
+                                if now - t < self._TOTP_WINDOW_SECONDS
+                            ]
+                            if len(self._totp_failures[remote_key]) >= self._TOTP_MAX_FAILURES:
+                                logger.warning(
+                                    f"TOTP rate limit exceeded for {remote_key}"
+                                )
+                                error_response = build_error(
+                                    "", "RATE_LIMITED",
+                                    "Too many failed attempts, try again later"
+                                )
+                                await websocket.send(error_response)
+                                await websocket.close()
+                                return
+
+                            totp_ok = self._check_totp_auth(raw_message, websocket)
+                            if totp_ok:
+                                # Clear failures on success
+                                self._totp_failures.pop(remote_key, None)
+                                from xml_pipeline.oob.protocol import build_ack
+                                await websocket.send(build_ack("", "TOTP authenticated"))
+                                continue
+                            else:
+                                self._totp_failures[remote_key].append(now)
+                                error_response = build_error("", "AUTH_REQUIRED", "TOTP authentication required")
+                                await websocket.send(error_response)
+                                await websocket.close()
+                                return
 
                 try:
                     response = await self._dispatch(raw_message, websocket)
                     await websocket.send(response)
                 except Exception as e:
-                    logger.error(f"OOB dispatch error: {e}")
-                    error_response = build_error("", "INTERNAL_ERROR", str(e))
+                    logger.error(f"OOB dispatch error: {e}", exc_info=True)
+                    error_response = build_error(
+                        "", "INTERNAL_ERROR", "Internal server error"
+                    )
                     await websocket.send(error_response)
         except Exception:
             pass  # Connection closed

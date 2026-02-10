@@ -30,6 +30,22 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
+# TTL validation
+# ---------------------------------------------------------------------------
+
+MAX_TTL_SECONDS = 315_360_000  # ~10 years
+
+
+def _validate_ttl(ttl: Optional[float]) -> None:
+    """Validate TTL value. Raises ValueError if invalid."""
+    if ttl is not None:
+        if ttl < 0:
+            raise ValueError(f"TTL must be non-negative, got {ttl}")
+        if ttl > MAX_TTL_SECONDS:
+            raise ValueError(f"TTL exceeds maximum ({MAX_TTL_SECONDS}s), got {ttl}")
+
+
+# ---------------------------------------------------------------------------
 # Backend protocol
 # ---------------------------------------------------------------------------
 
@@ -108,6 +124,7 @@ class SqliteBackend:
             return value
 
     async def set(self, key: str, value: str, ttl: Optional[float] = None) -> None:
+        _validate_ttl(ttl)
         await self._ensure_db()
         expiry_at = (time.time() + ttl) if ttl else None
         async with aiosqlite.connect(self._db_path) as db:
@@ -166,6 +183,7 @@ class MemoryBackend:
         return value
 
     async def set(self, key: str, value: str, ttl: Optional[float] = None) -> None:
+        _validate_ttl(ttl)
         expiry_at = (time.time() + ttl) if ttl else None
         self._store[key] = (value, expiry_at)
 

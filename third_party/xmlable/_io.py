@@ -7,6 +7,7 @@ Easy file IO for users
 from pathlib import Path
 from typing import Any, TypeVar
 from termcolor import colored
+from lxml import etree, objectify
 from lxml.objectify import parse as objectify_parse
 from lxml.etree import _ElementTree
 
@@ -31,8 +32,11 @@ def parse_file(cls: type, file_path: str | Path) -> Any:
     """
     if not is_xmlified(cls):
         raise ErrorTypes.NotXmlified(cls)
+    _secure_parser = objectify.makeparser(
+        resolve_entities=False, no_network=True, huge_tree=False,
+    )
     with open(file=file_path, mode="r") as f:
-        return cls.parse(objectify_parse(f).getroot())  # type: ignore[attr-defined]
+        return cls.parse(objectify_parse(f, parser=_secure_parser).getroot())  # type: ignore[attr-defined]
 
 
 def write_xsd(

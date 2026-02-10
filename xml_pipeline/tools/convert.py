@@ -8,10 +8,18 @@ from __future__ import annotations
 
 import json
 import re
-import xml.etree.ElementTree as ET
 from typing import Any
 
+from lxml import etree
+
 from .base import tool, ToolResult
+
+# Hardened XML parser: no entity resolution, no network access, no huge trees
+_SECURE_PARSER = etree.XMLParser(
+    resolve_entities=False,
+    no_network=True,
+    huge_tree=False,
+)
 
 # Maximum input size (1 MB) to prevent denial-of-service
 MAX_INPUT_SIZE = 1_000_000
@@ -26,7 +34,7 @@ def _validate_tag_name(name: str) -> None:
         raise ValueError(f"Invalid XML tag name: {name!r}")
 
 
-def _xml_to_dict(element: ET.Element) -> dict | str | list:
+def _xml_to_dict(element: etree._Element) -> dict | str | list:
     """Recursively convert XML element to dict."""
     # If element has no children, return text content
     if len(element) == 0:
@@ -44,18 +52,19 @@ def _xml_to_dict(element: ET.Element) -> dict | str | list:
             return int(text)
         except ValueError:
             return text
-    
+
     result = {}
-    
+
     # Add attributes with @ prefix
     for key, value in element.attrib.items():
         result[f"@{key}"] = value
-    
+
     # Process children
     for child in element:
         child_data = _xml_to_dict(child)
-        tag = child.tag
-        
+        # Strip namespace from tag if present
+        tag = etree.QName(child.tag).localname if isinstance(child.tag, str) else child.tag
+
         # Handle multiple children with same tag -> array
         if tag in result:
             if not isinstance(result[tag], list):
@@ -63,17 +72,17 @@ def _xml_to_dict(element: ET.Element) -> dict | str | list:
             result[tag].append(child_data)
         else:
             result[tag] = child_data
-    
+
     return result
 
 
-def _dict_to_xml(data: Any, tag: str = "item", parent: ET.Element | None = None) -> ET.Element:
+def _dict_to_xml(data: Any, tag: str = "item", parent: etree._Element | None = None) -> etree._Element:
     """Recursively convert dict to XML element."""
     _validate_tag_name(tag)
     if parent is None:
-        elem = ET.Element(tag)
+        elem = etree.Element(tag)
     else:
-        elem = ET.SubElement(parent, tag)
+        elem = etree.SubElement(parent, tag)
 
     if isinstance(data, dict):
         for key, value in data.items():
@@ -92,7 +101,7 @@ def _dict_to_xml(data: Any, tag: str = "item", parent: ET.Element | None = None)
             else:
                 # Simple value as child element
                 _validate_tag_name(key)
-                child = ET.SubElement(elem, key)
+                child = etree.SubElement(elem, key)
                 if value is not None:
                     child.text = str(value)
     elif isinstance(data, list):
@@ -101,7 +110,7 @@ def _dict_to_xml(data: Any, tag: str = "item", parent: ET.Element | None = None)
     else:
         if data is not None:
             elem.text = str(data)
-    
+
     return elem
 
 
@@ -130,18 +139,21 @@ async def xml_to_json(
     if len(xml_string) > MAX_INPUT_SIZE:
         return ToolResult(success=False, error=f"Input exceeds {MAX_INPUT_SIZE} byte limit")
     try:
-        # Parse XML
-        root = ET.fromstring(xml_string.strip())
+        # Parse XML with hardened parser
+        root = etree.fromstring(xml_string.strip().encode("utf-8"), parser=_SECURE_PARSER)
         data = _xml_to_dict(root)
 
+        # Strip namespace from root tag if present
+        root_tag = etree.QName(root.tag).localname if isinstance(root.tag, str) else root.tag
+
         # Wrap with root tag name if it's meaningful
-        result = {root.tag: data} if not strip_root else data
+        result = {root_tag: data} if not strip_root else data
 
         return ToolResult(success=True, data={
             "json": json.dumps(result, indent=2),
             "data": result,
         })
-    except ET.ParseError as e:
+    except etree.XMLSyntaxError as e:
         return ToolResult(success=False, error=f"Invalid XML: {e}")
     except Exception as e:
         return ToolResult(success=False, error=f"Conversion error: {e}")
@@ -175,12 +187,12 @@ async def json_to_xml(
     try:
         data = json.loads(json_string)
         root = _dict_to_xml(data, root_tag)
-        
+
         if pretty:
-            ET.indent(root)
-        
-        xml_str = ET.tostring(root, encoding="unicode")
-        
+            etree.indent(root)
+
+        xml_str = etree.tostring(root, encoding="unicode")
+
         return ToolResult(success=True, data={
             "xml": xml_str,
         })
@@ -209,22 +221,23 @@ async def xml_extract(
     if len(xml_string) > MAX_INPUT_SIZE:
         return ToolResult(success=False, error=f"Input exceeds {MAX_INPUT_SIZE} byte limit")
     try:
-        root = ET.fromstring(xml_string.strip())
+        root = etree.fromstring(xml_string.strip().encode("utf-8"), parser=_SECURE_PARSER)
         elements = root.findall(xpath)
-        
+
         matches = []
         for elem in elements:
+            tag = etree.QName(elem.tag).localname if isinstance(elem.tag, str) else elem.tag
             matches.append({
-                "tag": elem.tag,
+                "tag": tag,
                 "attributes": dict(elem.attrib),
                 "data": _xml_to_dict(elem),
             })
-        
+
         return ToolResult(success=True, data={
             "matches": matches,
             "count": len(matches),
         })
-    except ET.ParseError as e:
+    except etree.XMLSyntaxError as e:
         return ToolResult(success=False, error=f"Invalid XML: {e}")
     except Exception as e:
         return ToolResult(success=False, error=f"XPath error: {e}")

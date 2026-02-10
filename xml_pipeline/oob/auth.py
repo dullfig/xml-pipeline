@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from lxml import etree
@@ -25,6 +26,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 NS = "https://xml-pipeline.org/privileged-msg"
+
+# Maximum age of a signed request before it's rejected (prevents replay)
+MAX_REQUEST_AGE_SECONDS = 300  # 5 minutes
+
+# Hardened parser for OOB XML requests
+_SECURE_PARSER = etree.XMLParser(
+    resolve_entities=False,
+    no_network=True,
+    huge_tree=False,
+)
 
 
 class OOBAuthError(Exception):
@@ -46,7 +57,7 @@ def parse_request(raw_xml: bytes) -> tuple[str, etree._Element, str]:
         OOBAuthError: If XML is malformed or structure is invalid
     """
     try:
-        tree = etree.fromstring(raw_xml)
+        tree = etree.fromstring(raw_xml, parser=_SECURE_PARSER)
     except etree.XMLSyntaxError as e:
         raise OOBAuthError(f"Malformed XML: {e}") from e
 
@@ -138,6 +149,21 @@ def verify_request(raw_xml: bytes, identity: Identity | None) -> bool:
 
     if not identity.verify(sig_bytes, canonical):
         raise OOBAuthError("Signature verification failed")
+
+    # Replay protection: reject requests with stale or missing timestamps
+    timestamp_str = payload.get("timestamp")
+    if timestamp_str:
+        try:
+            request_time = float(timestamp_str)
+            age = abs(time.time() - request_time)
+            if age > MAX_REQUEST_AGE_SECONDS:
+                raise OOBAuthError(
+                    f"Request timestamp too old ({age:.0f}s > {MAX_REQUEST_AGE_SECONDS}s)"
+                )
+        except (ValueError, OverflowError):
+            logger.warning(f"Invalid timestamp in OOB request: {timestamp_str!r}")
+    else:
+        logger.debug("OOB request has no timestamp — replay protection inactive")
 
     return True
 

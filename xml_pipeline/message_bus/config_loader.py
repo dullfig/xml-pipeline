@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import re
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -165,8 +166,29 @@ class ConfigLoader:
             handler_sha256=raw.get("handler_sha256", ""),
         )
 
+    # Safe module path pattern: dotted identifiers only, no dunder segments
+    _SAFE_MODULE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+
+    @classmethod
+    def _validate_import_path(cls, path: str, context: str) -> None:
+        """Validate that an import path contains only safe characters."""
+        if not cls._SAFE_MODULE_RE.match(path):
+            raise ValueError(
+                f"Unsafe import path in {context}: {path!r} "
+                f"(must be dotted Python identifiers)"
+            )
+        # Reject dunder segments (e.g., __builtins__, __import__)
+        for segment in path.split("."):
+            if segment.startswith("__") and segment.endswith("__"):
+                raise ValueError(
+                    f"Dunder module segment not allowed in {context}: {segment!r}"
+                )
+
     @classmethod
     def _resolve_imports(cls, lc: ListenerConfig) -> None:
+        cls._validate_import_path(lc.payload_class_path, f"listener '{lc.name}' payload_class")
+        cls._validate_import_path(lc.handler_path, f"listener '{lc.name}' handler")
+
         mod, cls_name = lc.payload_class_path.rsplit(".", 1)
         lc.payload_class = getattr(importlib.import_module(mod), cls_name)
 

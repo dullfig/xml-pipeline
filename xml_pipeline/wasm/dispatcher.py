@@ -143,28 +143,32 @@ def _make_handler(
                 handle.store, handle.memory, handle.alloc_fn, input_json
             )
 
-            # Call handler
-            handler_fn = handle.instance.exports(handle.store).get(handler_export_name)
-            result_ptr = handler_fn(handle.store, input_ptr, input_len)
+            try:
+                # Call handler
+                handler_fn = handle.instance.exports(handle.store).get(handler_export_name)
+                result_ptr = handler_fn(handle.store, input_ptr, input_len)
 
-            # Read result: ptr is packed as (ptr << 32 | len) for i64,
-            # or just ptr for i32 (length read from first 4 bytes)
-            if isinstance(result_ptr, int) and result_ptr > 0xFFFFFFFF:
-                # Packed i64: high 32 bits = ptr, low 32 bits = len
-                r_ptr = (result_ptr >> 32) & 0xFFFFFFFF
-                r_len = result_ptr & 0xFFFFFFFF
-            else:
-                # i32 ptr — read length from first 4 bytes at ptr
-                r_ptr = result_ptr
-                len_bytes = handle.memory.read(handle.store, r_ptr, r_ptr + 4)
-                r_len = int.from_bytes(bytes(len_bytes), "little")
-                r_ptr += 4
+                # Read result: ptr is packed as (ptr << 32 | len) for i64,
+                # or just ptr for i32 (length read from first 4 bytes)
+                if isinstance(result_ptr, int) and result_ptr > 0xFFFFFFFF:
+                    # Packed i64: high 32 bits = ptr, low 32 bits = len
+                    r_ptr = (result_ptr >> 32) & 0xFFFFFFFF
+                    r_len = result_ptr & 0xFFFFFFFF
+                else:
+                    # i32 ptr — read length from first 4 bytes at ptr
+                    r_ptr = result_ptr
+                    len_bytes = handle.memory.read(handle.store, r_ptr, r_ptr + 4)
+                    r_len = int.from_bytes(bytes(len_bytes), "little")
+                    r_ptr += 4
 
-            result_str = read_string(handle.store, handle.memory, r_ptr, r_len)
-
-            # Free input memory
-            if handle.free_fn:
-                handle.free_fn(handle.store, input_ptr)
+                result_str = read_string(handle.store, handle.memory, r_ptr, r_len)
+            finally:
+                # Always free input memory, even on timeout/error
+                if handle.free_fn:
+                    try:
+                        handle.free_fn(handle.store, input_ptr)
+                    except Exception:
+                        pass  # Instance may be poisoned on timeout
 
             return result_str
 
@@ -185,9 +189,23 @@ def _make_handler(
         # Build response payload
         response = _json_to_payload(result_json, response_cls, response_record)
 
-        # 5. Route: check _to field for explicit routing
+        # 5. Route: check _to field for explicit routing (validated against peers)
         to = result_dict.get("_to")
         if to:
+            # Validate routing target against the listener's declared peers
+            from xml_pipeline.message_bus.singleton import get_stream_pump
+            pump = get_stream_pump()
+            if pump:
+                listener = pump.listeners.get(module.name) or next(
+                    (l for n, l in pump.listeners.items() if n.startswith(f"{module.name}.")),
+                    None,
+                )
+                if listener and listener.peers and to not in listener.peers:
+                    logger.warning(
+                        f"WASM module '{module.name}' tried to route to "
+                        f"'{to}' which is not in its peers: {listener.peers}"
+                    )
+                    return HandlerResponse.respond(payload=response)
             return HandlerResponse(payload=response, to=to)
         return HandlerResponse.respond(payload=response)
 

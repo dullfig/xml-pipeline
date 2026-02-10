@@ -11,9 +11,14 @@ Key files use PEM format for compatibility.
 from __future__ import annotations
 
 import base64
+import logging
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+_identity_logger = logging.getLogger(__name__)
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -64,6 +69,18 @@ class Identity:
 
         if not key_path.exists():
             raise IdentityError(f"Identity key not found: {path}")
+
+        # Warn if private key has overly permissive file permissions (Unix only)
+        if sys.platform != "win32":
+            try:
+                mode = key_path.stat().st_mode & 0o777
+                if mode & 0o077:  # Group or other has any access
+                    _identity_logger.warning(
+                        f"Private key file {path} has permissive mode "
+                        f"{oct(mode)} — recommended: chmod 600"
+                    )
+            except OSError:
+                pass
 
         try:
             pem_data = key_path.read_bytes()

@@ -26,6 +26,7 @@ from .base import tool, ToolResult
 
 # Security configuration
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_REDIRECTS = 5
 DEFAULT_TIMEOUT = 30
 ALLOWED_SCHEMES = {"http", "https"}
 ALLOWED_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
@@ -44,23 +45,40 @@ BLOCKED_HOSTS = {
 # ---------------------------------------------------------------------------
 
 
-def _is_private_ip(hostname: str) -> bool:
-    """Check if hostname resolves to a private/internal IP."""
-    try:
-        # Try to parse as IP address first
-        try:
-            ip = ipaddress.ip_address(hostname)
-            return ip.is_private or ip.is_loopback or ip.is_link_local
-        except ValueError:
-            pass
+def _is_dangerous_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Check if an IP address is private, loopback, link-local, or reserved."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
-        # Resolve hostname to IP
+
+def _is_private_ip(hostname: str) -> bool:
+    """Check if hostname resolves to a private/internal IP.
+
+    Always resolves through DNS to catch hex/octal IP encoding bypasses.
+    """
+    try:
+        # Always resolve hostname to canonical IP first (catches hex/octal tricks)
         ip_str = socket.gethostbyname(hostname)
         ip = ipaddress.ip_address(ip_str)
-        return ip.is_private or ip.is_loopback or ip.is_link_local
+        return _is_dangerous_ip(ip)
     except (socket.gaierror, socket.herror):
-        # Can't resolve - block by default for security
-        return True
+        pass
+
+    # Fallback: try parsing as literal IP (handles cases where DNS is unavailable)
+    try:
+        ip = ipaddress.ip_address(hostname)
+        return _is_dangerous_ip(ip)
+    except ValueError:
+        pass
+
+    # Can't resolve — block by default for security
+    return True
 
 
 def _validate_url(url: str, allow_internal: bool = False) -> Optional[str]:
@@ -126,15 +144,41 @@ async def _do_fetch(
     timeout = min(max(1, timeout), 300)
 
     async with httpx.AsyncClient(
-        follow_redirects=True,
+        follow_redirects=False,
         timeout=httpx.Timeout(timeout),
     ) as client:
-        response = await client.request(
-            method,
-            url,
-            headers=headers,
-            content=body,
-        )
+        # Manual redirect loop: re-validate each Location against SSRF rules
+        current_url = url
+        for _ in range(MAX_REDIRECTS):
+            response = await client.request(
+                method,
+                current_url,
+                headers=headers,
+                content=body,
+            )
+
+            if response.status_code not in (301, 302, 303, 307, 308):
+                break
+
+            location = response.headers.get("location")
+            if not location:
+                break
+
+            # Resolve relative redirects against current URL
+            current_url = str(response.url.join(location))
+
+            # Re-validate the redirect target against SSRF rules
+            if redirect_error := _validate_url(current_url, allow_internal):
+                raise ValueError(
+                    f"Redirect blocked: {redirect_error} (from {url})"
+                )
+
+            # 303 converts to GET per HTTP spec
+            if response.status_code == 303:
+                method = "GET"
+                body = None
+        else:
+            raise ValueError(f"Too many redirects (max {MAX_REDIRECTS})")
 
         # Check response size
         body_bytes = response.content

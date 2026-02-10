@@ -15,6 +15,15 @@ from xml.sax.saxutils import escape as xml_escape
 logger = logging.getLogger(__name__)
 
 
+def _escape_xquery_string(s: str) -> str:
+    """Escape a string for safe embedding in XQuery string literals.
+
+    XQuery uses doubled quotes for escaping inside string literals,
+    not backslash escaping.  ``"`` → ``""`` and ``'`` → ``''``.
+    """
+    return s.replace('"', '""').replace("'", "''")
+
+
 @dataclass
 class Source:
     """A source chunk used in answering a query."""
@@ -69,7 +78,7 @@ async def _search_chunks(
     from xml_pipeline.tools.librarian import librarian_query
 
     # Escape query for XQuery
-    query_escaped = query.replace('"', '\\"').replace("'", "\\'")
+    query_escaped = _escape_xquery_string(query)
 
     # Full-text search using Lucene
     xquery = f"""
@@ -158,7 +167,7 @@ async def _search_chunks_fallback(
     from xml_pipeline.tools.librarian import librarian_query
 
     # Simple contains search
-    query_lower = query.lower().replace('"', '\\"').replace("'", "\\'")
+    query_lower = _escape_xquery_string(query.lower())
     terms = query_lower.split()
 
     # Build contains conditions
@@ -389,7 +398,7 @@ async def get_chunk_by_id(library_id: str, chunk_id: str) -> Optional[RetrievedC
     """
     from xml_pipeline.tools.librarian import librarian_query
 
-    chunk_id_escaped = chunk_id.replace('"', '\\"')
+    chunk_id_escaped = _escape_xquery_string(chunk_id)
 
     xquery = f"""
     declare namespace l = "https://xml-pipeline.org/ns/librarian/v1";

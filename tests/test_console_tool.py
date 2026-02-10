@@ -137,15 +137,19 @@ class TestHandleConsolePrompt:
         assert isinstance(resp.payload, ConsoleInput)
         assert resp.payload.source == "greeter"
         assert resp.payload.text == "Alice"
-        assert mock.prompts == [("greeter", "What is your name?")]
+        # Display source uses metadata.from_id (trusted), not payload.source
+        assert mock.prompts == [("caller", "What is your name?")]
 
     async def test_echoes_source(self) -> None:
-        """Source from the prompt is echoed back in ConsoleInput."""
+        """Source from the prompt is echoed back in ConsoleInput (payload field preserved)."""
         mock = MockBackend(input_response="yes")
         set_console_backend(mock)
         payload = ConsolePrompt(source="monitor", text="Continue?")
         resp = await handle_console_prompt(payload, _metadata())
+        # ConsoleInput.source preserves the payload.source for round-trip routing
         assert resp.payload.source == "monitor"
+        # But display uses metadata.from_id (trusted identity)
+        assert mock.prompts == [("caller", "Continue?")]
 
 
 # ═══════════════════════════════════════════════════════════════════════════

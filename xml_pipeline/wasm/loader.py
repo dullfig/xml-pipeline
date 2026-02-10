@@ -78,7 +78,10 @@ class WasmModule:
         store_ref: list = [store]
 
         from xml_pipeline.wasm.host_functions import link_host_functions
-        link_host_functions(linker, capabilities, memory_ref, alloc_ref, store_ref)
+        link_host_functions(
+            linker, capabilities, memory_ref, alloc_ref, store_ref,
+            module_name_for_kv=self.name,
+        )
 
         # Instantiate
         instance = linker.instantiate(store, self.module)

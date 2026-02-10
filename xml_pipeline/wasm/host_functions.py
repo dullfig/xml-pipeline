@@ -27,6 +27,13 @@ except ImportError:
 
 def read_string(store: Any, memory: Any, ptr: int, length: int) -> str:
     """Read a UTF-8 string from WASM linear memory."""
+    if ptr < 0 or length < 0:
+        raise ValueError(f"Invalid memory access: ptr={ptr}, length={length}")
+    mem_size = memory.data_len(store)
+    if ptr + length > mem_size:
+        raise ValueError(
+            f"Out-of-bounds read: ptr={ptr}, length={length}, memory_size={mem_size}"
+        )
     data = memory.read(store, ptr, ptr + length)
     return bytes(data).decode("utf-8")
 
@@ -43,6 +50,14 @@ def write_string(
     encoded = text.encode("utf-8")
     length = len(encoded)
     ptr = alloc_fn(store, length)
+    if ptr <= 0:
+        raise ValueError(f"WASM alloc returned invalid pointer: {ptr}")
+    mem_size = memory.data_len(store)
+    if ptr + length > mem_size:
+        raise ValueError(
+            f"WASM alloc returned out-of-bounds pointer: ptr={ptr}, "
+            f"length={length}, memory_size={mem_size}"
+        )
     memory.write(store, encoded, ptr)
     return ptr, length
 
@@ -79,7 +94,8 @@ def _host_fetch(
         url = read_string(store, memory, url_ptr, url_len)
         method = read_string(store, memory, method_ptr, method_len)
     except Exception as e:
-        result = json.dumps({"error": f"Failed to read fetch args: {e}"})
+        logger.warning(f"WASM host_fetch: failed to read args: {e}")
+        result = json.dumps({"error": "Failed to read fetch arguments"})
         ptr, length = write_string(store, memory, alloc_fn, result)
         return (ptr << 32) | length
 
@@ -90,20 +106,21 @@ def _host_fetch(
         # Run async fetch synchronously (wasmtime calls are sync)
         loop = asyncio.new_event_loop()
         try:
-            status, body, content_type, error = loop.run_until_complete(
+            fetch_result = loop.run_until_complete(
                 _do_fetch(url=url, method=method)
             )
         finally:
             loop.close()
 
         result = json.dumps({
-            "status_code": status,
-            "body": body[:65536] if body else "",  # Cap at 64KB
-            "content_type": content_type or "",
-            "error": error or "",
+            "status_code": fetch_result.get("status_code", 0),
+            "body": fetch_result.get("body", "")[:65536],  # Cap at 64KB
+            "content_type": fetch_result.get("content_type", ""),
+            "error": "",
         })
     except Exception as e:
-        result = json.dumps({"error": str(e)})
+        logger.warning(f"WASM host_fetch error for url={url!r}: {e}")
+        result = json.dumps({"error": "Fetch request failed"})
 
     ptr, length = write_string(store, memory, alloc_fn, result)
     return (ptr << 32) | length
@@ -112,12 +129,14 @@ def _host_fetch(
 def _host_kv_get(
     store: Any, memory: Any, alloc_fn: Any,
     key_ptr: int, key_len: int,
+    kv_namespace: str = "wasm",
 ) -> int:
     """Get a value from keyvalue store. Returns packed (ptr << 32 | len)."""
     try:
         key = read_string(store, memory, key_ptr, key_len)
     except Exception as e:
-        result = json.dumps({"error": f"Failed to read key: {e}"})
+        logger.warning(f"WASM host_kv_get: failed to read key: {e}")
+        result = json.dumps({"error": "Failed to read key"})
         ptr, length = write_string(store, memory, alloc_fn, result)
         return (ptr << 32) | length
 
@@ -127,13 +146,14 @@ def _host_kv_get(
 
         loop = asyncio.new_event_loop()
         try:
-            value = loop.run_until_complete(kv_get(key, namespace="wasm"))
+            value = loop.run_until_complete(kv_get(key, namespace=kv_namespace))
         finally:
             loop.close()
 
         result = json.dumps({"value": value})
     except Exception as e:
-        result = json.dumps({"error": str(e)})
+        logger.warning(f"WASM host_kv_get error for key={key!r}: {e}")
+        result = json.dumps({"error": "KV get failed"})
 
     ptr, length = write_string(store, memory, alloc_fn, result)
     return (ptr << 32) | length
@@ -143,6 +163,7 @@ def _host_kv_set(
     store: Any, memory: Any,
     key_ptr: int, key_len: int,
     val_ptr: int, val_len: int,
+    kv_namespace: str = "wasm",
 ) -> None:
     """Set a value in keyvalue store."""
     try:
@@ -158,7 +179,7 @@ def _host_kv_set(
 
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(kv_set(key, value, namespace="wasm"))
+            loop.run_until_complete(kv_set(key, value, namespace=kv_namespace))
         finally:
             loop.close()
     except Exception as e:
@@ -175,6 +196,8 @@ def link_host_functions(
     memory_ref: list,
     alloc_ref: list,
     store_ref: list,
+    *,
+    module_name_for_kv: str = "wasm",
 ) -> None:
     """
     Link host functions into a wasmtime Linker based on declared capabilities.
@@ -189,6 +212,7 @@ def link_host_functions(
         memory_ref: [memory] — populated after instantiation
         alloc_ref: [alloc_fn] — populated after instantiation
         store_ref: [store] — populated after instantiation
+        module_name_for_kv: module name for KV namespace isolation (default "wasm")
     """
     if not WASMTIME_AVAILABLE:
         return
@@ -233,13 +257,15 @@ def link_host_functions(
         )
 
     if "kv" in capabilities:
+        _kv_ns = f"wasm:{module_name_for_kv}"
+
         def host_kv_get_wrapper(
             caller: Any, key_ptr: int, key_len: int,
         ) -> int:
             if memory_ref and alloc_ref and store_ref:
                 return _host_kv_get(
                     store_ref[0], memory_ref[0], alloc_ref[0],
-                    key_ptr, key_len,
+                    key_ptr, key_len, kv_namespace=_kv_ns,
                 )
             return 0
 
@@ -261,6 +287,7 @@ def link_host_functions(
                 _host_kv_set(
                     store_ref[0], memory_ref[0],
                     key_ptr, key_len, val_ptr, val_len,
+                    kv_namespace=_kv_ns,
                 )
 
         linker.define_func(

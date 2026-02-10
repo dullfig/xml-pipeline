@@ -38,7 +38,9 @@ async def extract_payloads(state: MessageState) -> AsyncIterable[MessageState]:
     try:
         # Wrap in dummy to handle multiple roots
         wrapped = b"<dummy>" + state.raw_bytes + b"</dummy>"
-        tree = etree.fromstring(wrapped, parser=etree.XMLParser(recover=True))
+        tree = etree.fromstring(wrapped, parser=etree.XMLParser(
+            recover=True, resolve_entities=False, no_network=True,
+        ))
 
         children = list(tree)
         if not children:

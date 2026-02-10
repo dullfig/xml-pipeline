@@ -252,16 +252,20 @@ async def handle_inject_message(pump: StreamPump, el: etree._Element, request_id
     thread_el = etree.SubElement(meta, f"{{{envelope_ns}}}thread")
     thread_el.text = thread_id
 
-    # Append payload content
+    # Append payload content (hardened parser — no entity resolution)
+    _secure_parser = etree.XMLParser(resolve_entities=False, no_network=True)
     try:
-        payload_tree = etree.fromstring(payload_xml.encode() if isinstance(payload_xml, str) else payload_xml)
+        payload_tree = etree.fromstring(
+            payload_xml.encode() if isinstance(payload_xml, str) else payload_xml,
+            parser=_secure_parser,
+        )
         payload_tree.set("xmlns", "")
         envelope.append(payload_tree)
     except etree.XMLSyntaxError:
-        # Raw text payload - wrap in element
         return build_error(request_id, "INVALID_PAYLOAD", "Payload is not valid XML")
 
     envelope_bytes = etree.tostring(envelope, xml_declaration=True, encoding="UTF-8")
+    # Route through _inject_raw — peer enforcement happens in the pipeline dispatch step
     await pump._inject_raw(envelope_bytes, thread_id=thread_id, from_id=from_id)
 
     return build_thread_created_response(request_id, thread_id, target)

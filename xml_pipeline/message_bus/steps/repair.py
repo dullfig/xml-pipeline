@@ -6,6 +6,7 @@ _RECOVERY_PARSER = etree.XMLParser(
     recover=True,           # Try to recover from malformed XML
     remove_blank_text=True, # Normalize whitespace
     resolve_entities=False, # Security: don't resolve external entities
+    no_network=True,        # Security: block DTD network resolution
     huge_tree=False,        # Default is safe
 )
 

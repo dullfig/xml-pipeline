@@ -59,16 +59,17 @@ def create_app(
         lifespan=lifespan,
     )
 
-    # CORS middleware
+    # CORS middleware — default to localhost-only for security.
+    # Pass explicit cors_origins=["*"] to allow all origins.
     if cors_origins is None:
-        cors_origins = ["*"]
+        cors_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     # Include routers

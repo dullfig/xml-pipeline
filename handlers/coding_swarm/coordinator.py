@@ -160,6 +160,20 @@ async def handle_coordinator(
 ) -> Optional[HandlerResponse]:
     """Deterministic FSM — dispatches based on phase + incoming role."""
     tid = metadata.thread_id
+    try:
+        return await _handle_coordinator_inner(payload, metadata)
+    except Exception:
+        logger.exception("Coordinator crashed for thread %s, cleaning up state", tid)
+        _states.pop(tid, None)
+        return None
+
+
+async def _handle_coordinator_inner(
+    payload: SwarmMessage,
+    metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Inner coordinator logic (wrapped by handle_coordinator for cleanup)."""
+    tid = metadata.thread_id
     state = _states.get(tid)
 
     # ── Phase: init ────────────────────────────────────────────────

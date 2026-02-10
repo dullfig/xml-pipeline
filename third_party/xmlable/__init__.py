@@ -16,16 +16,22 @@ def _get_xobject(cls: Type[T]) -> Any:
         raise ValueError(f"Class {cls.__name__} is not decorated with @xmlify")
     return cls.get_xobject()
 
+_SECURE_OBJECTIFY_PARSER = objectify.makeparser(
+    resolve_entities=False, no_network=True, huge_tree=False,
+)
+
 def parse_element(cls: Type[T], element: _Element | ObjectifiedElement) -> T:
     """Direct in-memory deserialization from validated lxml Element."""
     xobject = _get_xobject(cls)
-    obj_element = objectify.fromstring(etree.tostring(element))
+    obj_element = objectify.fromstring(
+        etree.tostring(element), parser=_SECURE_OBJECTIFY_PARSER,
+    )
     # Create a root context for error tracing
     ctx = XErrorCtx(trace=[cls.__name__])
     return xobject.xml_in(obj_element, ctx=ctx)
 
 def parse_bytes(cls: Type[T], xml_bytes: bytes) -> T:
-    tree = objectify.parse(BytesIO(xml_bytes))
+    tree = objectify.parse(BytesIO(xml_bytes), parser=_SECURE_OBJECTIFY_PARSER)
     root = tree.getroot()
     return parse_element(cls, root)
 

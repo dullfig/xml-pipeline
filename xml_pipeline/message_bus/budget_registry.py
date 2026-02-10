@@ -80,9 +80,9 @@ class ThreadBudget:
         prompt_tokens: int = 0,
         completion_tokens: int = 0,
     ) -> None:
-        """Record token consumption."""
-        self.prompt_tokens += prompt_tokens
-        self.completion_tokens += completion_tokens
+        """Record token consumption. Negative values are clamped to 0."""
+        self.prompt_tokens += max(0, prompt_tokens)
+        self.completion_tokens += max(0, completion_tokens)
         self.request_count += 1
 
     def check_thresholds(
