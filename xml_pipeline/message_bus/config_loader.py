@@ -146,6 +146,10 @@ class ConfigLoader:
 
     @classmethod
     def _parse_listener(cls, raw: dict) -> ListenerConfig:
+        # trusted: None = auto-detect, True/False = explicit
+        trusted_raw = raw.get("trusted")
+        trusted = None if trusted_raw is None else bool(trusted_raw)
+
         return ListenerConfig(
             name=raw["name"],
             payload_class_path=raw["payload_class"],
@@ -156,6 +160,7 @@ class ConfigLoader:
             broadcast=raw.get("broadcast", False),
             prompt=raw.get("prompt", ""),
             timeout=float(raw.get("timeout_seconds", 30.0)),
+            trusted=trusted,
         )
 
     @classmethod

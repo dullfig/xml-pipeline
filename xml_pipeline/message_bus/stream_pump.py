@@ -161,6 +161,9 @@ class StreamPump:
         # WASM registry (initialized in start() if tools declared)
         self._wasm_registry: Any = None
 
+        # Sandbox registry for untrusted handler subprocess isolation
+        self._sandbox_registry: Any = None
+
         # Shell worker (OS-isolated execution via xp-exec)
         self._shell_worker_id: Optional[str] = None
         self._shell_config: Dict[str, Any] = {}
@@ -256,6 +259,19 @@ class StreamPump:
     def register_listener(self, lc: ListenerConfig) -> Listener:
         root_tag = f"{lc.name.lower()}.{lc.payload_class.__name__.lower()}"
 
+        # Resolve trust: None = auto-detect
+        if lc.trusted is None:
+            if lc.name.startswith("system.") or lc.is_agent:
+                trusted = True
+            elif "<locals>" in (lc.handler.__qualname__ if lc.handler else ""):
+                # Closures/lambdas/nested functions cannot be imported in a
+                # subprocess — force trusted (in-process) execution.
+                trusted = True
+            else:
+                trusted = False
+        else:
+            trusted = lc.trusted
+
         listener = Listener(
             name=lc.name,
             payload_class=lc.payload_class,
@@ -265,6 +281,7 @@ class StreamPump:
             peers=lc.peers,
             broadcast=lc.broadcast,
             timeout=lc.timeout,
+            trusted=trusted,
             schema=self._generate_schema(lc.payload_class),
             root_tag=root_tag,
         )
@@ -290,6 +307,7 @@ class StreamPump:
         broadcast: bool = False,
         prompt: str = "",
         timeout: float = 30.0,
+        trusted: bool = True,
     ) -> Listener:
         """
         Register a listener using plain arguments (public API).
@@ -297,6 +315,11 @@ class StreamPump:
         This is the preferred way to register listeners programmatically.
         Internally constructs a ListenerConfig and delegates to
         register_listener().
+
+        Programmatic callers are in the trusted zone (they have direct
+        Python access), so ``trusted`` defaults to True. Use
+        ``trusted=False`` to explicitly sandbox a handler in a subprocess.
+        YAML-loaded handlers use auto-detection via ``ListenerConfig.trusted=None``.
 
         Args:
             name: Unique listener name (e.g., "greeter", "calculator.add")
@@ -308,6 +331,7 @@ class StreamPump:
             broadcast: Allow multiple listeners to share root tag
             prompt: System prompt for LLM agents
             timeout: Handler execution timeout in seconds (default 30)
+            trusted: Run handler in-process (True) or subprocess (False)
 
         Returns:
             The registered Listener object
@@ -326,6 +350,7 @@ class StreamPump:
             broadcast=broadcast,
             prompt=prompt,
             timeout=timeout,
+            trusted=trusted,
             payload_class=payload_class,
             handler=handler,
         )
@@ -742,6 +767,14 @@ class StreamPump:
             for tool_cfg in self.config.wasm_tool_configs:
                 register_wasm_tool(self, tool_cfg)
 
+        # --- 1c. Sandbox workers for untrusted handlers ---
+        from xml_pipeline.message_bus.handler_sandbox import SandboxRegistry
+        self._sandbox_registry = SandboxRegistry()
+        for listener in self.listeners.values():
+            if not listener.trusted:
+                self._sandbox_registry.register(listener)
+        self._sandbox_registry.start_all()
+
         # --- 2. Build usage_instructions (needs all listeners registered) ---
         for listener in self.listeners.values():
             if listener.is_agent and listener.peers:
@@ -1022,10 +1055,23 @@ class StreamPump:
 
                     # Dispatch to handler with per-listener timeout
                     try:
-                        response = await asyncio.wait_for(
-                            listener.handler(payload_ref, metadata),
-                            timeout=listener.timeout,
+                        use_sandbox = (
+                            not listener.trusted
+                            and self._sandbox_registry is not None
+                            and listener.name in self._sandbox_registry._workers
                         )
+                        if use_sandbox:
+                            response = await asyncio.wait_for(
+                                self._sandbox_registry.dispatch(
+                                    listener, payload_ref, metadata
+                                ),
+                                timeout=listener.timeout,
+                            )
+                        else:
+                            response = await asyncio.wait_for(
+                                listener.handler(payload_ref, metadata),
+                                timeout=listener.timeout,
+                            )
                     except asyncio.TimeoutError:
                         pump_logger.error(
                             f"Handler {listener.name} timed out after {listener.timeout}s"
@@ -1605,6 +1651,11 @@ class StreamPump:
             from xml_pipeline.network.port_gate import reset_port_gate
             reset_port_gate()
             self._port_gate = None
+
+        # Shutdown sandbox workers
+        if self._sandbox_registry:
+            self._sandbox_registry.shutdown_all()
+            self._sandbox_registry = None
 
         # Shutdown WASM registry
         if self._wasm_registry:

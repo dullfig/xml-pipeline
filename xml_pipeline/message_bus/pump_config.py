@@ -27,6 +27,7 @@ class ListenerConfig:
     broadcast: bool = False
     prompt: str = ""  # System prompt for LLM agents (loaded into PromptRegistry)
     timeout: float = 30.0  # Handler execution timeout in seconds
+    trusted: bool | None = None  # None = auto-detect (system/agent → trusted)
     payload_class: type = field(default=None, repr=False)
     handler: Callable = field(default=None, repr=False)
 
@@ -96,6 +97,7 @@ class Listener:
     peers: List[str] = field(default_factory=list)
     broadcast: bool = False
     timeout: float = 30.0  # Handler execution timeout in seconds
+    trusted: bool = True  # Untrusted → subprocess isolation
     schema: etree.XMLSchema = field(default=None, repr=False)
     root_tag: str = ""
     usage_instructions: str = ""  # Generated at registration for LLM agents
