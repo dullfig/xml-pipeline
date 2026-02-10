@@ -7,21 +7,25 @@ for peer-enforcement.
 
 State Machine Phases
 --------------------
-init       → receive task          → send design-request to architect
-designing  → receive design-result → validate WIT → send write-request to workspace-write
-wit-saved  → receive write-result  → send code-request to coder
-coding     → receive code-result   → validate code → send write-request (AS) to workspace-write
-src-saved  → receive write-result  → send test-request to tester
-testing    → receive test-result   → validate Python → if fail & retries<3: back to coding
-                                     else: send write-request (tests)
-tests-saved→ receive write-result  → send review-request to reviewer
-reviewing  → receive review-result → if reject & retries<2: back to coding
-                                     else: return None (complete)
+init         → receive task            → send design-request to architect
+designing    → receive design-result   → validate WIT → send write-request to workspace-write
+wit-saving   → receive write-result    → send code-request to coder
+coding       → receive code-result     → validate code → send write-request (AS) to workspace-write
+src-saving   → receive write-result    → send compile-request to compile
+building     → receive compile-result  → if fail & retries<3: back to coder
+                                         else: send test-request to tester
+testing      → receive test-result     → validate JSON → send test-run-request to test-runner
+test-running → receive test-run-result → if fail: back to coder
+                                         else: send write-request (tests)
+tests-saving → receive write-result    → send review-request to reviewer
+reviewing    → receive review-result   → if reject & retries<2: back to coding
+                                         else: return None (complete)
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import re
 import time
@@ -37,6 +41,7 @@ logger = logging.getLogger(__name__)
 MAX_TEST_RETRIES = 3
 MAX_REVIEW_RETRIES = 2
 MAX_DESIGN_RETRIES = 3
+MAX_COMPILE_RETRIES = 3
 MAX_CODE_SIZE = 1 * 1024 * 1024  # 1 MB
 MAX_STATES = 100
 STATE_TTL = 3600  # 1 hour
@@ -56,6 +61,7 @@ class CoordinatorState:
     test_retries: int = 0
     review_retries: int = 0
     design_retries: int = 0
+    compile_retries: int = 0
     last_error: str = ""
     created_at: float = field(default_factory=time.time)
 
@@ -116,6 +122,26 @@ def _validate_code_content(content: str) -> Optional[str]:
         return "Empty code content"
     if len(content.encode("utf-8")) > MAX_CODE_SIZE:
         return f"Code exceeds {MAX_CODE_SIZE} byte limit"
+    return None
+
+
+def _validate_json_test_cases(content: str) -> Optional[str]:
+    """Validate JSON test case array. Returns error string or None."""
+    if not content or not content.strip():
+        return "Empty test case content"
+    try:
+        cases = json.loads(content)
+    except json.JSONDecodeError as exc:
+        return f"Invalid JSON: {exc}"
+    if not isinstance(cases, list):
+        return "Test cases must be a JSON array"
+    for i, case in enumerate(cases):
+        if not isinstance(case, dict):
+            return f"Test case {i} must be an object"
+        if "function" not in case:
+            return f"Test case {i} missing 'function' field"
+        if "expected" not in case:
+            return f"Test case {i} missing 'expected' field"
     return None
 
 
@@ -301,6 +327,52 @@ async def handle_coordinator(
         if payload.status == "error":
             cleanup_thread(tid)
             return None
+        state.phase = "building"
+        return HandlerResponse(
+            payload=SwarmMessage(
+                role="compile-request",
+                tool_name=state.tool_name,
+                content=state.code_content,
+                status="pending",
+                error="",
+                iteration=state.compile_retries,
+                phase="building",
+            ),
+            to="compile",
+        )
+
+    # ── Phase: building ───────────────────────────────────────────
+    if state.phase == "building":
+        if payload.role != "compile-result":
+            return None
+        if payload.status == "error":
+            state.compile_retries += 1
+            if state.compile_retries >= MAX_COMPILE_RETRIES:
+                logger.warning("Max compile retries for thread %s", tid)
+                cleanup_thread(tid)
+                return None
+            # Retry: go back to coder with compile error
+            state.last_error = payload.error or payload.content
+            state.phase = "coding"
+            return HandlerResponse(
+                payload=SwarmMessage(
+                    role="code-request",
+                    tool_name=state.tool_name,
+                    content=(
+                        f"WIT:\n{state.wit_content}\n\n"
+                        f"Requirements:\n{state.requirements}\n\n"
+                        f"Previous code:\n{state.code_content}\n\n"
+                        f"Compile error (attempt {state.compile_retries}/{MAX_COMPILE_RETRIES}):\n"
+                        f"{state.last_error}"
+                    ),
+                    status="pending",
+                    error="",
+                    iteration=state.compile_retries,
+                    phase="coding",
+                ),
+                to="coder",
+            )
+        # Compilation succeeded — move to testing
         state.phase = "testing"
         return HandlerResponse(
             payload=SwarmMessage(
@@ -346,22 +418,22 @@ async def handle_coordinator(
                 to="coder",
             )
 
-        # Validate Python test output
-        py_error = _validate_python_content(payload.content)
-        if py_error:
+        # Validate JSON test cases
+        json_error = _validate_json_test_cases(payload.content)
+        if json_error:
             state.test_retries += 1
             if state.test_retries >= MAX_TEST_RETRIES:
                 cleanup_thread(tid)
                 return None
-            state.last_error = py_error
+            state.last_error = json_error
             return HandlerResponse(
                 payload=SwarmMessage(
                     role="test-request",
                     tool_name=state.tool_name,
                     content=(
                         f"WIT:\n{state.wit_content}\n\nSource:\n{state.code_content}\n\n"
-                        f"Previous test code had syntax errors (attempt "
-                        f"{state.test_retries}/{MAX_TEST_RETRIES}):\n{py_error}"
+                        f"Previous test cases had format errors (attempt "
+                        f"{state.test_retries}/{MAX_TEST_RETRIES}):\n{json_error}"
                     ),
                     status="pending",
                     error="",
@@ -372,12 +444,57 @@ async def handle_coordinator(
             )
 
         state.test_content = payload.content
+        state.phase = "test-running"
+        return HandlerResponse(
+            payload=SwarmMessage(
+                role="test-run-request",
+                tool_name=state.tool_name,
+                content=state.test_content,
+                status="pending",
+                error="",
+                iteration=state.test_retries,
+                phase="test-running",
+            ),
+            to="test-runner",
+        )
+
+    # ── Phase: test-running ──────────────────────────────────────
+    if state.phase == "test-running":
+        if payload.role != "test-run-result":
+            return None
+        if payload.status == "error":
+            state.test_retries += 1
+            if state.test_retries >= MAX_TEST_RETRIES:
+                cleanup_thread(tid)
+                return None
+            # Retry: go back to coder with test run failure details
+            state.last_error = payload.error or payload.content
+            state.phase = "coding"
+            return HandlerResponse(
+                payload=SwarmMessage(
+                    role="code-request",
+                    tool_name=state.tool_name,
+                    content=(
+                        f"WIT:\n{state.wit_content}\n\n"
+                        f"Requirements:\n{state.requirements}\n\n"
+                        f"Previous code:\n{state.code_content}\n\n"
+                        f"Test run failure (attempt {state.test_retries}/{MAX_TEST_RETRIES}):\n"
+                        f"{state.last_error}"
+                    ),
+                    status="pending",
+                    error="",
+                    iteration=state.test_retries,
+                    phase="coding",
+                ),
+                to="coder",
+            )
+        # Tests passed — save test cases
         state.phase = "tests-saving"
         return HandlerResponse(
             payload=SwarmMessage(
                 role="write-request",
                 tool_name=state.tool_name,
-                content=f"path:test_{state.tool_name}.py\n{state.test_content}",
+                content=f"path:test_{state.tool_name}.json\n{state.test_content}",
                 status="pending",
                 error="",
                 iteration=0,

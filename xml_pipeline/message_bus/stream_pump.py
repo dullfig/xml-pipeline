@@ -846,6 +846,17 @@ class StreamPump:
         if self.config.shell_config.get("enabled") and sys.platform == "linux":
             self._start_shell_worker()
 
+        # --- 12. WASI compiler ---
+        if self.config.compiler_config:
+            from xml_pipeline.wasm.compiler import CompilerConfig, configure_compiler
+            cc = self.config.compiler_config
+            configure_compiler(CompilerConfig(
+                asc_wasm_path=cc["asc_wasm_path"],
+                stdlib_path=cc.get("stdlib_path", ""),
+                timeout_seconds=cc.get("timeout_seconds", 60.0),
+                memory_limit_mb=cc.get("memory_limit_mb", 256),
+            ))
+
         pump_logger.info(
             f"Organism '{self.config.name}' started: "
             f"{len(self.listeners)} listeners, root={root_uuid}"
@@ -1605,6 +1616,10 @@ class StreamPump:
         # Clear shell worker reference (process stopped by shutdown_all)
         self._shell_worker_id = None
         self._shell_config = {}
+
+        # Reset WASI compiler
+        from xml_pipeline.wasm.compiler import reset_compiler
+        reset_compiler()
 
         # Stop all background workers
         if self._worker_registry:

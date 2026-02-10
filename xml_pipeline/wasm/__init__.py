@@ -3,7 +3,7 @@ wasm — WASM tool integration for xml-pipeline.
 
 Foreign tools (AssemblyScript, Rust, etc.) run in WASM sandboxes as
 first-class listeners. WIT interfaces define the contract; dynamic
-dataclasses bridge WASM ↔ XML.
+dataclasses bridge WASM <-> XML.
 """
 
 from xml_pipeline.wasm.registry import (
@@ -22,6 +22,14 @@ from xml_pipeline.wasm.wit_parser import (
 )
 from xml_pipeline.wasm.loader import WasmModule, WasmValidationError, WasmToolConfig
 from xml_pipeline.wasm.capability_gate import CapabilityDeniedError, KNOWN_CAPABILITIES
+from xml_pipeline.wasm.compiler import (
+    WasiCompiler,
+    CompilerConfig,
+    CompileResult,
+    get_compiler,
+    configure_compiler,
+    reset_compiler,
+)
 
 __all__ = [
     # Registry
@@ -44,4 +52,11 @@ __all__ = [
     # Capability gate
     "CapabilityDeniedError",
     "KNOWN_CAPABILITIES",
+    # Compiler
+    "WasiCompiler",
+    "CompilerConfig",
+    "CompileResult",
+    "get_compiler",
+    "configure_compiler",
+    "reset_compiler",
 ]

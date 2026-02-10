@@ -101,6 +101,17 @@ class ConfigLoader:
                 "totp_secret_env": shell_raw.get("totp_secret_env", ""),
             }
 
+        # Parse compiler config
+        compiler_config: Dict[str, Any] = {}
+        compiler_raw = raw.get("compiler", {})
+        if compiler_raw:
+            compiler_config = {
+                "asc_wasm_path": compiler_raw.get("asc_wasm_path", ""),
+                "stdlib_path": compiler_raw.get("stdlib_path", ""),
+                "timeout_seconds": float(compiler_raw.get("timeout_seconds", 60.0)),
+                "memory_limit_mb": int(compiler_raw.get("memory_limit_mb", 256)),
+            }
+
         config = OrganismConfig(
             name=org.get("name", "unnamed"),
             identity_path=org.get("identity", ""),
@@ -123,6 +134,7 @@ class ConfigLoader:
             network_ports=network_ports,
             wasm_tool_configs=wasm_tool_configs,
             shell_config=shell_config,
+            compiler_config=compiler_config,
         )
 
         for entry in raw.get("listeners", []):

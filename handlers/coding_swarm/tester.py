@@ -1,9 +1,10 @@
 """
-tester.py — LLM agent that writes pytest test cases for WASM tools.
+tester.py — LLM agent that writes JSON test cases for WASM tools.
 
 Receives ``test-request`` messages containing a WIT interface and source
-code, calls the LLM to produce test cases, and returns a ``test-result``.
-A ``status`` of ``"error"`` signals test failure (triggers coordinator retry).
+code, calls the LLM to produce structured JSON test cases, and returns
+a ``test-result``. A ``status`` of ``"error"`` signals test failure
+(triggers coordinator retry).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ async def handle_tester(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Generate pytest tests for the tool's source code."""
+    """Generate JSON test cases for the tool's WASM exports."""
     if payload.role != "test-request":
         return HandlerResponse.respond(
             payload=SwarmMessage(
@@ -43,10 +44,22 @@ async def handle_tester(
             agent_name=metadata.own_name or "tester",
             thread_id=metadata.thread_id,
             user_message=(
-                f"Write pytest test cases for the WASM tool "
+                f"Write JSON test cases for the WASM tool "
                 f"'{payload.tool_name}'.\n\n"
                 f"{payload.content}\n\n"
-                "Respond with ONLY the pytest test code, no explanation."
+                "Respond with ONLY a JSON array of test case objects. "
+                "Each object must have:\n"
+                '  - "function": the export function name to call\n'
+                '  - "input": an object with the input fields\n'
+                '  - "expected": an object with the expected output fields\n\n'
+                "Example:\n"
+                '[\n'
+                '  {"function": "calculate", "input": {"expression": "2+2"}, '
+                '"expected": {"result": "4", "error": ""}},\n'
+                '  {"function": "calculate", "input": {"expression": "bad"}, '
+                '"expected": {"result": "", "error": "parse error"}}\n'
+                ']\n\n'
+                "Respond with ONLY the JSON array, no explanation."
             ),
             temperature=0.2,
         )

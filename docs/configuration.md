@@ -294,6 +294,35 @@ from xml_pipeline import get_wasm_registry
 registry = get_wasm_registry()
 ```
 
+#### `compiler`
+WASI-sandboxed AssemblyScript compiler configuration. When present, enables the coding swarm to compile `.ts` source to `.wasm` inside a WASI sandbox (no subprocess). Empty or absent `compiler:` section = compilation disabled.
+
+- `asc_wasm_path` (required): Path to the `asc.wasm` binary (from the AssemblyScript npm package).
+- `stdlib_path`: Path to the AssemblyScript standard library directory. Default: `""` (no stdlib preopen).
+- `timeout_seconds`: Compilation timeout. Default: `60`.
+- `memory_limit_mb`: WASM linear memory limit for the compiler. Default: `256` (higher than regular tools — compilation is memory-intensive).
+
+```yaml
+compiler:
+  asc_wasm_path: ./tools/asc.wasm
+  stdlib_path: ./tools/assemblyscript/std
+  timeout_seconds: 60
+  memory_limit_mb: 256
+```
+
+The compiler is available programmatically via `get_compiler()`:
+
+```python
+from xml_pipeline.wasm import get_compiler, configure_compiler, CompilerConfig
+
+# Configure (usually done via YAML in start())
+configure_compiler(CompilerConfig(asc_wasm_path="./tools/asc.wasm"))
+
+# Use
+compiler = get_compiler()
+result = compiler.compile({"main.ts": source_code})
+```
+
 #### `listeners`
 All bounded capabilities (tools and agents).
 - `name`: Unique registered name (dots allowed for hierarchy). Becomes prefix of derived root tag.

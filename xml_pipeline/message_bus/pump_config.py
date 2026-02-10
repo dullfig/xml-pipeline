@@ -81,6 +81,10 @@ class OrganismConfig:
     # {"enabled": bool, "default_os_user": str, "xp_exec_path": str, "totp_secret_env": str}
     shell_config: Dict[str, Any] = field(default_factory=dict)
 
+    # WASI compiler config from YAML
+    # {"asc_wasm_path": str, "stdlib_path": str, "timeout_seconds": float, "memory_limit_mb": int}
+    compiler_config: Dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass
 class Listener:

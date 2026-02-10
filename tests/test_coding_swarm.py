@@ -11,7 +11,7 @@ Run with: pytest tests/test_coding_swarm.py -v
 from __future__ import annotations
 
 import asyncio
-import shlex
+import json
 import time
 from dataclasses import dataclass
 from typing import List, Optional
@@ -44,15 +44,17 @@ from handlers.coding_swarm.coordinator import (
     _validate_wit_content,
     _validate_python_content,
     _validate_code_content,
+    _validate_json_test_cases,
     _evict_expired_states,
     CoordinatorState,
     MAX_STATES,
     STATE_TTL,
+    MAX_COMPILE_RETRIES,
 )
 from handlers.coding_swarm.tools import (
     handle_workspace_read,
     handle_workspace_write,
-    handle_build_run,
+    handle_compile,
     get_swarm_backend,
     set_swarm_backend,
     _reset_backend,
@@ -60,6 +62,7 @@ from handlers.coding_swarm.tools import (
     ALLOWED_EXTENSIONS,
     ARTIFACT_NAME_RE,
 )
+from handlers.coding_swarm.test_runner import handle_test_run
 
 
 # ============================================================================
@@ -84,12 +87,10 @@ export function calculate(req: CalculateRequest): CalculateResponse {
     return { result: "42", error: "" };
 }"""
 
-CANNED_TESTS = """\
-import pytest
-def test_calculate_basic():
-    assert True
-def test_calculate_error():
-    assert True"""
+CANNED_TEST_CASES = json.dumps([
+    {"function": "calculate", "input": {"expression": "2+2"}, "expected": {"result": "4", "error": ""}},
+    {"function": "calculate", "input": {"expression": "bad"}, "expected": {"result": "", "error": "parse error"}},
+])
 
 
 # ============================================================================
@@ -130,15 +131,55 @@ async def stub_coder(
     )
 
 
+async def stub_compile(
+    payload: SwarmMessage, metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Always returns successful compilation."""
+    # Store a fake .wasm in KV (base64 of "fakewasm")
+    import base64
+    backend = get_swarm_backend()
+    wasm_key = f"{metadata.thread_id}:{payload.tool_name}.wasm"
+    await backend.set(wasm_key, base64.b64encode(b"fakewasm").decode("ascii"))
+
+    return HandlerResponse.respond(
+        payload=SwarmMessage(
+            role="compile-result",
+            tool_name=payload.tool_name,
+            content="Compilation successful",
+            status="success",
+            error="",
+            iteration=payload.iteration,
+            phase=payload.phase,
+        ),
+    )
+
+
 async def stub_tester_pass(
     payload: SwarmMessage, metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Always returns passing tests."""
+    """Always returns passing JSON test cases."""
     return HandlerResponse.respond(
         payload=SwarmMessage(
             role="test-result",
             tool_name=payload.tool_name,
-            content=CANNED_TESTS,
+            content=CANNED_TEST_CASES,
+            status="success",
+            error="",
+            iteration=payload.iteration,
+            phase=payload.phase,
+        ),
+    )
+
+
+async def stub_test_runner(
+    payload: SwarmMessage, metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Always returns all tests passing."""
+    return HandlerResponse.respond(
+        payload=SwarmMessage(
+            role="test-run-result",
+            tool_name=payload.tool_name,
+            content="All 2 tests passed",
             status="success",
             error="",
             iteration=payload.iteration,
@@ -171,7 +212,7 @@ async def stub_tester_fail_then_pass(
         payload=SwarmMessage(
             role="test-result",
             tool_name=payload.tool_name,
-            content=CANNED_TESTS,
+            content=CANNED_TEST_CASES,
             status="success",
             error="",
             iteration=payload.iteration,
@@ -243,6 +284,98 @@ async def stub_reviewer_reject_then_approve(
             role="review-result",
             tool_name=payload.tool_name,
             content="APPROVED",
+            status="success",
+            error="",
+            iteration=payload.iteration,
+            phase=payload.phase,
+        ),
+    )
+
+
+_compile_fail_count = []
+
+
+async def stub_compile_fail_then_pass(
+    payload: SwarmMessage, metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Fails on first call, passes on second."""
+    _compile_fail_count.append(1)
+    if len(_compile_fail_count) == 1:
+        return HandlerResponse.respond(
+            payload=SwarmMessage(
+                role="compile-result",
+                tool_name=payload.tool_name,
+                content="",
+                status="error",
+                error="TS2322: Type 'string' is not assignable to type 'number'",
+                iteration=payload.iteration,
+                phase=payload.phase,
+            ),
+        )
+    # Success on second call — store fake .wasm
+    import base64
+    backend = get_swarm_backend()
+    wasm_key = f"{metadata.thread_id}:{payload.tool_name}.wasm"
+    await backend.set(wasm_key, base64.b64encode(b"fakewasm").decode("ascii"))
+    return HandlerResponse.respond(
+        payload=SwarmMessage(
+            role="compile-result",
+            tool_name=payload.tool_name,
+            content="Compilation successful",
+            status="success",
+            error="",
+            iteration=payload.iteration,
+            phase=payload.phase,
+        ),
+    )
+
+
+_compile_always_fail_count = []
+
+
+async def stub_compile_always_fail(
+    payload: SwarmMessage, metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Always fails compilation."""
+    _compile_always_fail_count.append(1)
+    return HandlerResponse.respond(
+        payload=SwarmMessage(
+            role="compile-result",
+            tool_name=payload.tool_name,
+            content="",
+            status="error",
+            error=f"Compile error #{len(_compile_always_fail_count)}",
+            iteration=payload.iteration,
+            phase=payload.phase,
+        ),
+    )
+
+
+_test_run_fail_count = []
+
+
+async def stub_test_runner_fail_then_pass(
+    payload: SwarmMessage, metadata: HandlerMetadata,
+) -> Optional[HandlerResponse]:
+    """Test runner fails on first call, passes on second."""
+    _test_run_fail_count.append(1)
+    if len(_test_run_fail_count) == 1:
+        return HandlerResponse.respond(
+            payload=SwarmMessage(
+                role="test-run-result",
+                tool_name=payload.tool_name,
+                content="calculate: expected 4, got 0",
+                status="error",
+                error="1 of 2 tests failed",
+                iteration=payload.iteration,
+                phase=payload.phase,
+            ),
+        )
+    return HandlerResponse.respond(
+        payload=SwarmMessage(
+            role="test-run-result",
+            tool_name=payload.tool_name,
+            content="All 2 tests passed",
             status="success",
             error="",
             iteration=payload.iteration,
@@ -346,6 +479,9 @@ def _reset_globals():
     _test_fail_count.clear()
     _test_always_fail_count.clear()
     _review_reject_count.clear()
+    _compile_fail_count.clear()
+    _compile_always_fail_count.clear()
+    _test_run_fail_count.clear()
     _reset_backend()
     yield
     reset_registry()
@@ -361,6 +497,8 @@ def _build_pump(
     *,
     tester_handler=stub_tester_pass,
     reviewer_handler=stub_reviewer_approve,
+    compile_handler=stub_compile,
+    test_runner_handler=stub_test_runner,
     name="test-swarm",
 ) -> StreamPump:
     """Register all coding-swarm listeners with deterministic stubs."""
@@ -371,7 +509,7 @@ def _build_pump(
         "coordinator", handle_coordinator, SwarmMessage,
         description="Coordinator FSM", agent=True,
         peers=["architect", "coder", "tester", "reviewer",
-               "workspace-read", "workspace-write", "build-run"],
+               "workspace-read", "workspace-write", "compile", "test-runner"],
     )
     # Stubs
     pump.register(
@@ -399,9 +537,14 @@ def _build_pump(
         "workspace-write", handle_workspace_write, SwarmMessage,
         description="Workspace write",
     )
+    # Compile and test-runner stubs
     pump.register(
-        "build-run", handle_build_run, SwarmMessage,
-        description="Build runner",
+        "compile", compile_handler, SwarmMessage,
+        description="WASI compiler",
+    )
+    pump.register(
+        "test-runner", test_runner_handler, SwarmMessage,
+        description="WASM test runner",
     )
     return pump
 
@@ -415,7 +558,7 @@ class TestHappyPath:
 
     @pytest.mark.asyncio
     async def test_full_workflow_completes(self):
-        """Task -> architect -> write WIT -> coder -> write src -> tester -> write tests -> reviewer -> done."""
+        """Task -> architect -> write WIT -> coder -> write src -> compile -> tester -> test-runner -> write tests -> reviewer -> done."""
         pump = _build_pump()
         await pump.start()
         await pump.inject("coordinator", _make_task_message())
@@ -430,7 +573,7 @@ class TestHappyPath:
         all_keys = await backend.keys("*")
         wit_keys = [k for k in all_keys if k.endswith(":calculator.wit")]
         src_keys = [k for k in all_keys if k.endswith(":calculator.ts")]
-        test_keys = [k for k in all_keys if k.endswith(":test_calculator.py")]
+        test_keys = [k for k in all_keys if k.endswith(":test_calculator.json")]
 
         assert len(wit_keys) == 1, "WIT artifact should be stored"
         assert len(src_keys) == 1, "Source artifact should be stored"
@@ -438,7 +581,7 @@ class TestHappyPath:
 
         assert await backend.get(wit_keys[0]) == CANNED_WIT
         assert await backend.get(src_keys[0]) == CANNED_CODE
-        assert await backend.get(test_keys[0]) == CANNED_TESTS
+        assert await backend.get(test_keys[0]) == CANNED_TEST_CASES
 
     @pytest.mark.asyncio
     async def test_events_emitted_for_each_hop(self):
@@ -454,7 +597,7 @@ class TestHappyPath:
 
         # All participants should have received at least one message
         expected = {"coordinator", "architect", "coder", "tester",
-                    "reviewer", "workspace-write"}
+                    "reviewer", "workspace-write", "compile", "test-runner"}
         assert expected.issubset(targets_hit), (
             f"Missing targets: {expected - targets_hit}"
         )
@@ -489,7 +632,7 @@ class TestTestRetry:
         all_keys = await backend.keys("*")
         assert any(k.endswith(":calculator.wit") for k in all_keys)
         assert any(k.endswith(":calculator.ts") for k in all_keys)
-        assert any(k.endswith(":test_calculator.py") for k in all_keys)
+        assert any(k.endswith(":test_calculator.json") for k in all_keys)
 
 
 # ============================================================================
@@ -540,7 +683,7 @@ class TestMaxRetries:
         # Test artifact should NOT be stored (never passed)
         backend = get_swarm_backend()
         all_keys = await backend.keys("*")
-        assert not any(k.endswith(":test_calculator.py") for k in all_keys), \
+        assert not any(k.endswith(":test_calculator.json") for k in all_keys), \
             "Test artifact should not exist after max retries"
 
         # WIT should be stored (that phase succeeded)
@@ -577,7 +720,7 @@ class TestToolError:
             "coordinator", handle_coordinator, SwarmMessage,
             description="Coordinator FSM", agent=True,
             peers=["architect", "coder", "tester", "reviewer",
-                   "workspace-read", "workspace-write", "build-run"],
+                   "workspace-read", "workspace-write", "compile", "test-runner"],
         )
         pump.register("architect", stub_architect, SwarmMessage,
                        description="Architect", agent=True, peers=[])
@@ -591,8 +734,10 @@ class TestToolError:
                        description="Read")
         pump.register("workspace-write", stub_write_error, SwarmMessage,
                        description="Write")
-        pump.register("build-run", handle_build_run, SwarmMessage,
-                       description="Build")
+        pump.register("compile", stub_compile, SwarmMessage,
+                       description="Compile")
+        pump.register("test-runner", stub_test_runner, SwarmMessage,
+                       description="Test runner")
         await pump.start()
         await pump.inject("coordinator", _make_task_message())
 
@@ -752,7 +897,7 @@ class TestWitValidation:
 
 
 # ============================================================================
-# 9. Python Validation
+# 9. Python Validation (utility — still valid even if FSM uses JSON now)
 # ============================================================================
 
 
@@ -861,82 +1006,117 @@ class TestStateTTL:
 
 
 # ============================================================================
-# 12. Shlex Tokenization
+# 12. JSON Test Case Validation
 # ============================================================================
 
 
-class TestShlexTokenization:
+class TestJsonTestCaseValidation:
 
-    def test_simple_split(self):
-        parts = shlex.split("npm run build")
-        assert parts == ["npm", "run", "build"]
+    def test_valid_cases(self):
+        assert _validate_json_test_cases(CANNED_TEST_CASES) is None
 
-    def test_quoted_args(self):
-        parts = shlex.split('pytest -k "test_foo and test_bar"')
-        assert parts == ["pytest", "-k", "test_foo and test_bar"]
+    def test_empty_rejected(self):
+        err = _validate_json_test_cases("")
+        assert err is not None
+        assert "Empty" in err
 
-    def test_str_split_differs(self):
-        """str.split would break quoted args incorrectly."""
-        cmd = 'npm run "my script"'
-        str_parts = cmd.split()
-        shlex_parts = shlex.split(cmd)
-        assert str_parts != shlex_parts
-        assert shlex_parts == ["npm", "run", "my script"]
+    def test_invalid_json_rejected(self):
+        err = _validate_json_test_cases("not json")
+        assert err is not None
+        assert "Invalid JSON" in err
+
+    def test_not_array_rejected(self):
+        err = _validate_json_test_cases('{"function": "calc"}')
+        assert err is not None
+        assert "JSON array" in err
+
+    def test_missing_function_rejected(self):
+        err = _validate_json_test_cases('[{"expected": {"result": "4"}}]')
+        assert err is not None
+        assert "function" in err
+
+    def test_missing_expected_rejected(self):
+        err = _validate_json_test_cases('[{"function": "calc"}]')
+        assert err is not None
+        assert "expected" in err
+
+    def test_empty_array_passes(self):
+        assert _validate_json_test_cases("[]") is None
 
 
 # ============================================================================
-# 13. Command Whitelist Enforced
+# 13. Compile Retry
 # ============================================================================
 
 
-class TestCommandWhitelist:
+class TestCompileRetry:
 
     @pytest.mark.asyncio
-    async def test_disallowed_command_rejected(self):
-        """Attempting to run 'rm -rf /' is rejected."""
-        pump = StreamPump(name="test-whitelist")
-        pump.register("build-run", handle_build_run, SwarmMessage,
-                       description="Build")
+    async def test_retry_on_compile_failure(self):
+        """Compile fails once -> coder retries -> compile passes -> workflow completes."""
+        pump = _build_pump(compile_handler=stub_compile_fail_then_pass)
         await pump.start()
+        await pump.inject("coordinator", _make_task_message())
 
-        evil_msg = SwarmMessage(
-            role="build-request",
-            tool_name="evil",
-            content="rm -rf /",
-            status="pending",
-            error="",
-            iteration=0,
-            phase="",
-        )
+        events = await run_until_quiet(pump, idle_timeout=2.0, max_duration=20.0)
 
-        sent_events: List[MessageSentEvent] = []
+        assert len(get_states()) == 0
 
-        def on_event(e):
-            if isinstance(e, MessageSentEvent):
-                sent_events.append(e)
-
-        pump.subscribe_events(on_event)
-        task = asyncio.create_task(pump.run())
-        await pump.inject("build-run", evil_msg)
-        await asyncio.sleep(1.5)
-        pump._running = False
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        await _drain_queue(pump)
-
-        build_results = [e for e in sent_events if e.payload_type == "SwarmMessage"]
-        assert len(build_results) >= 1
-        result = build_results[0].payload
-        assert isinstance(result, SwarmMessage)
-        assert result.status == "error"
-        assert "whitelist" in result.error.lower() or "not in" in result.error.lower()
+        recv_events = [e for e in events if isinstance(e, MessageReceivedEvent)]
+        coder_calls = [e for e in recv_events if e.to_id == "coder"]
+        assert len(coder_calls) >= 2, "Coder should be called at least twice on compile retry"
 
 
 # ============================================================================
-# 14. Code Content Validation
+# 14. Compile Exhaustion
+# ============================================================================
+
+
+class TestCompileExhaustion:
+
+    @pytest.mark.asyncio
+    async def test_max_compile_retries_terminates(self):
+        """Compile always fails -> workflow terminates."""
+        pump = _build_pump(compile_handler=stub_compile_always_fail)
+        await pump.start()
+        await pump.inject("coordinator", _make_task_message())
+
+        events = await run_until_quiet(pump, idle_timeout=2.0, max_duration=20.0)
+
+        assert len(get_states()) == 0
+
+        # Source should be stored (coding phase succeeded) but no test artifacts
+        backend = get_swarm_backend()
+        all_keys = await backend.keys("*")
+        assert any(k.endswith(":calculator.ts") for k in all_keys)
+        assert not any(k.endswith(":test_calculator.json") for k in all_keys)
+
+
+# ============================================================================
+# 15. Test Run Retry
+# ============================================================================
+
+
+class TestTestRunRetry:
+
+    @pytest.mark.asyncio
+    async def test_retry_on_test_run_failure(self):
+        """Test runner fails once -> coder retries -> test runner passes -> workflow completes."""
+        pump = _build_pump(test_runner_handler=stub_test_runner_fail_then_pass)
+        await pump.start()
+        await pump.inject("coordinator", _make_task_message())
+
+        events = await run_until_quiet(pump, idle_timeout=2.0, max_duration=20.0)
+
+        assert len(get_states()) == 0
+
+        recv_events = [e for e in events if isinstance(e, MessageReceivedEvent)]
+        coder_calls = [e for e in recv_events if e.to_id == "coder"]
+        assert len(coder_calls) >= 2, "Coder should be called at least twice on test run retry"
+
+
+# ============================================================================
+# 16. Code Content Validation
 # ============================================================================
 
 
@@ -963,7 +1143,7 @@ class TestCodeContentValidation:
 
 
 # ============================================================================
-# 15. Event Emission at Each Phase
+# 17. Event Emission at Each Phase
 # ============================================================================
 
 

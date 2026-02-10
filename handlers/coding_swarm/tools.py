@@ -4,24 +4,21 @@ tools.py — Workspace and build tool handlers for the coding swarm.
 Three scoped tools with security constraints:
 - workspace-read:  Read artifacts from KV-backed storage
 - workspace-write: Write artifacts to KV-backed storage
-- build-run:       Execute whitelisted commands only
+- compile:         WASI-sandboxed AssemblyScript compilation
 
 Security:
 - Artifact name validation (no paths, traversal, or bad extensions)
-- Command whitelist enforcement
+- WASI sandbox for compilation (no subprocess)
 - File size limits (10 MB)
-- Command timeout (15 s)
 - Per-thread isolation via KV key prefixing
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import re
-import shlex
-import tempfile
-from pathlib import Path
 from typing import Optional
 
 from xml_pipeline.message_bus.message_state import HandlerMetadata, HandlerResponse
@@ -32,8 +29,7 @@ from handlers.coding_swarm.payloads import SwarmMessage
 # ── Configuration ──────────────────────────────────────────────────────────
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-COMMAND_TIMEOUT = 15  # seconds
-ALLOWED_COMMANDS = {"asc", "npm", "npx", "node", "pytest"}
+COMPILE_TIMEOUT = 60.0  # seconds
 
 # Artifact name validation
 ARTIFACT_NAME_RE = re.compile(r'^[a-zA-Z0-9_.-]+$')
@@ -205,104 +201,93 @@ async def handle_workspace_write(
         )
 
 
-async def handle_build_run(
+async def handle_compile(
     payload: SwarmMessage,
     metadata: HandlerMetadata,
 ) -> Optional[HandlerResponse]:
-    """Run a whitelisted command against thread artifacts.
+    """Compile AssemblyScript source to WASM via WASI-sandboxed asc.wasm.
 
-    Expected ``content`` format: ``command arg1 arg2 ...``
-
-    Artifacts are extracted to a temporary directory, the command runs there,
-    and any new/modified files are stored back in KV.
+    Reads .ts source from KV storage, compiles via WasiCompiler, and
+    stores the resulting .wasm as base64 in KV.
     """
     try:
-        parts = shlex.split(payload.content.strip())
-        if not parts:
-            raise ValueError("Empty command")
-
-        cmd = parts[0]
-        if cmd not in ALLOWED_COMMANDS:
-            raise ValueError(
-                f"Command '{cmd}' not in whitelist: {sorted(ALLOWED_COMMANDS)}"
-            )
+        from xml_pipeline.wasm.compiler import get_compiler
 
         backend = get_swarm_backend()
         prefix = f"{metadata.thread_id}:"
 
-        # Fetch all thread artifacts
-        all_keys = await backend.keys(f"{prefix}*")
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir_path = Path(tmpdir)
-
-            # Extract artifacts to tmpdir
-            for key in all_keys:
-                artifact_name = key[len(prefix):]
-                content = await backend.get(key)
-                if content is not None:
-                    target = tmpdir_path / artifact_name
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
-
-            # Snapshot mtimes before run
-            before_mtimes = {}
-            for f in tmpdir_path.iterdir():
-                if f.is_file():
-                    before_mtimes[f.name] = f.stat().st_mtime
-
-            proc = await asyncio.create_subprocess_exec(
-                *parts,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(tmpdir_path),
+        # Read source from KV
+        src_key = f"{prefix}{payload.tool_name}.ts"
+        source = await backend.get(src_key)
+        if source is None:
+            raise FileNotFoundError(
+                f"Source not found in KV: {payload.tool_name}.ts"
             )
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=COMMAND_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                raise TimeoutError(f"Command timed out after {COMMAND_TIMEOUT}s")
 
-            # Scan for new/modified files and store back
-            for f in tmpdir_path.iterdir():
-                if f.is_file():
-                    old_mtime = before_mtimes.get(f.name)
-                    if old_mtime is None or f.stat().st_mtime > old_mtime:
-                        new_content = f.read_text(encoding="utf-8")
-                        await backend.set(f"{prefix}{f.name}", new_content)
+        compiler = get_compiler()
 
-            output = stdout.decode("utf-8", errors="replace")
-            if proc.returncode != 0:
-                err_output = stderr.decode("utf-8", errors="replace")
-                return HandlerResponse.respond(
-                    payload=SwarmMessage(
-                        role="build-result",
-                        tool_name=payload.tool_name,
-                        content=output,
-                        status="error",
-                        error=f"Exit code {proc.returncode}: {err_output}",
-                        iteration=payload.iteration,
-                        phase=payload.phase,
-                    ),
-                )
+        # Run compilation in a thread with timeout
+        compile_result = await asyncio.wait_for(
+            asyncio.to_thread(
+                compiler.compile, {"main.ts": source}
+            ),
+            timeout=COMPILE_TIMEOUT,
+        )
+
+        if compile_result.success:
+            # Store compiled .wasm as base64
+            wasm_b64 = base64.b64encode(compile_result.wasm_bytes).decode("ascii")
+            await backend.set(f"{prefix}{payload.tool_name}.wasm", wasm_b64)
 
             return HandlerResponse.respond(
                 payload=SwarmMessage(
-                    role="build-result",
+                    role="compile-result",
                     tool_name=payload.tool_name,
-                    content=output,
+                    content=compile_result.stdout,
                     status="success",
                     error="",
                     iteration=payload.iteration,
                     phase=payload.phase,
                 ),
             )
+        else:
+            error_detail = compile_result.error
+            if compile_result.stderr:
+                error_detail = f"{error_detail}\n{compile_result.stderr}"
+            return HandlerResponse.respond(
+                payload=SwarmMessage(
+                    role="compile-result",
+                    tool_name=payload.tool_name,
+                    content=compile_result.stdout,
+                    status="error",
+                    error=error_detail,
+                    iteration=payload.iteration,
+                    phase=payload.phase,
+                ),
+            )
+
+    except asyncio.TimeoutError:
+        # Interrupt the compiler to free resources
+        try:
+            from xml_pipeline.wasm.compiler import get_compiler
+            get_compiler().interrupt()
+        except Exception:
+            pass
+        return HandlerResponse.respond(
+            payload=SwarmMessage(
+                role="compile-result",
+                tool_name=payload.tool_name,
+                content="",
+                status="error",
+                error=f"Compilation timed out after {COMPILE_TIMEOUT}s",
+                iteration=payload.iteration,
+                phase=payload.phase,
+            ),
+        )
     except Exception as exc:
         return HandlerResponse.respond(
             payload=SwarmMessage(
-                role="build-result",
+                role="compile-result",
                 tool_name=payload.tool_name,
                 content="",
                 status="error",
