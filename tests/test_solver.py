@@ -529,8 +529,7 @@ class TestHandleSolve:
         payload = SolveRequest(equations="x^2 - 4 = 0", variables="x")
         meta = HandlerMetadata(
             thread_id="t1", from_id="agent", own_name="solver",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_solve(payload, meta)
         assert resp is not None
         assert resp.payload.error == ""
@@ -546,8 +545,7 @@ class TestHandleSolve:
         )
         meta = HandlerMetadata(
             thread_id="t1", from_id="agent", own_name="solver",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_solve(payload, meta)
         assert resp is not None
         assert resp.payload.error == ""
@@ -560,8 +558,7 @@ class TestHandleSolve:
         payload = SolveRequest(equations="x + = 0", variables="x")
         meta = HandlerMetadata(
             thread_id="t1", from_id="agent", own_name="solver",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_solve(payload, meta)
         assert resp is not None
         assert resp.payload.error != ""
@@ -572,8 +569,7 @@ class TestHandleSolve:
         payload = SolveRequest(equations="x = 5", variables="x")
         meta = HandlerMetadata(
             thread_id="t1", from_id="agent", own_name="solver",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_solve(payload, meta)
         assert resp.payload.equations == "x = 5"
         assert resp.payload.variables == "x"

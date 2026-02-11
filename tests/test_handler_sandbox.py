@@ -140,7 +140,6 @@ def _make_metadata(**kwargs) -> HandlerMetadata:
         "own_name": None,
         "is_self_call": False,
         "usage_instructions": "",
-        "todo_nudge": "",
     }
     defaults.update(kwargs)
     return HandlerMetadata(**defaults)

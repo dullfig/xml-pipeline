@@ -220,8 +220,7 @@ class TestBootstrapLifecycle:
         pump.register("logger", handle_log, Answer, description="Logger")
         await pump.start()
 
-        expected = ["system.boot", "system.todo", "system.todo-complete",
-                    "system.sequence", "system.buffer"]
+        expected = ["system.boot", "system.sequence", "system.buffer"]
         for name in expected:
             assert name in pump.listeners, f"Missing system listener: {name}"
 
@@ -641,7 +640,6 @@ class TestYAMLConfig:
 
         # System listeners present
         assert "system.boot" in pump.listeners
-        assert "system.todo" in pump.listeners
 
         # Don't run pipeline (avoids LLM dependency)
         await _drain_queue(pump)

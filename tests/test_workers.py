@@ -28,7 +28,6 @@ from xml_pipeline.message_bus.stream_pump import StreamPump
 from xml_pipeline.message_bus.pump_config import Listener, ListenerConfig
 from xml_pipeline.message_bus.events import AgentStateEvent, ThreadEvent
 from xml_pipeline.message_bus.thread_registry import get_registry
-from xml_pipeline.message_bus.todo_registry import get_todo_registry
 from xml_pipeline.workers.registry import (
     WorkerRegistry,
     WorkerStatus,
@@ -344,41 +343,6 @@ class TestThreadLifecycle:
         assert len(thread_events) >= 1
 
     @pytest.mark.asyncio
-    async def test_todo_cleanup_on_thread_death(self):
-        """Todo watchers should be cleaned up when thread terminates."""
-        pump = StreamPump(name="test-todo-cleanup")
-        pump.register("terminal", _noop_handler, SamplePayload,
-                       description="Terminal handler")
-        await pump.start()
-        await pump.queue.get()  # drain boot
-
-        thread_id = await pump.inject("terminal", SamplePayload(value="test"))
-
-        # Register a todo watcher on this thread
-        todo_registry = get_todo_registry()
-        watcher_id = todo_registry.register(
-            thread_id=thread_id,
-            issuer="terminal",
-            wait_for="SomeResponse",
-        )
-
-        # Verify watcher exists
-        assert todo_registry._by_id.get(watcher_id) is not None
-
-        # Run pipeline — handler returns None → cleanup
-        pump._running = True
-        pipeline = pump.build_pipeline(pump._queue_source())
-        try:
-            await asyncio.wait_for(self._run_one(pipeline), timeout=5.0)
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            pump._running = False
-
-        # Watcher should be cleaned up
-        assert todo_registry._by_id.get(watcher_id) is None
-
-    @pytest.mark.asyncio
     async def test_worker_cleanup_on_thread_death(self):
         """Workers should be stopped when their owning thread dies."""
         pump = StreamPump(name="test-worker-cleanup")
@@ -416,7 +380,7 @@ class TestThreadLifecycle:
 
     @pytest.mark.asyncio
     async def test_cleanup_thread_method_directly(self):
-        """_cleanup_thread should clean budget, todos, workers, and emit event."""
+        """_cleanup_thread should clean budget, workers, and emit event."""
         pump = StreamPump(name="test-direct-cleanup")
 
         events = []
@@ -424,19 +388,8 @@ class TestThreadLifecycle:
 
         thread_id = "test-thread-12345678"
 
-        # Register a todo watcher
-        todo_registry = get_todo_registry()
-        watcher_id = todo_registry.register(
-            thread_id=thread_id,
-            issuer="some-agent",
-            wait_for="SomeResponse",
-        )
-
         # Call cleanup directly
         pump._cleanup_thread(thread_id)
-
-        # Todo should be cleaned
-        assert todo_registry._by_id.get(watcher_id) is None
 
         # ThreadEvent should be emitted
         thread_events = [

@@ -32,7 +32,6 @@ from xml_pipeline.message_bus.steps.payload_extraction import payload_extraction
 from xml_pipeline.message_bus.steps.thread_assignment import thread_assignment_step
 from xml_pipeline.message_bus.message_state import MessageState, HandlerMetadata, HandlerResponse, SystemError, ROUTING_ERROR, TIMEOUT_ERROR
 from xml_pipeline.message_bus.thread_registry import get_registry
-from xml_pipeline.message_bus.todo_registry import get_todo_registry
 from xml_pipeline.message_bus.budget_registry import get_budget_registry
 from xml_pipeline.memory import get_context_buffer
 
@@ -228,14 +227,6 @@ class StreamPump:
             pump_logger.debug(
                 f"Thread {thread_id[:8]}... completed: "
                 f"{final_budget.total_tokens} tokens used"
-            )
-
-        # Todo watcher cleanup
-        todo_registry = get_todo_registry()
-        closed = todo_registry.close_all_for_thread(thread_id)
-        if closed:
-            pump_logger.debug(
-                f"Thread {thread_id[:8]}... closed {closed} todo watcher(s)"
             )
 
         # Worker cleanup
@@ -725,7 +716,7 @@ class StreamPump:
 
         This performs the full initialization sequence after pump
         creation:
-        1. Register system listeners (Boot, Todo, Sequence, Buffer)
+        1. Register system listeners (Boot, Sequence, Buffer)
         2. Build usage_instructions for all agents (second pass)
         3. Load prompts into PromptRegistry and freeze it
         4. Configure LLM router (if llm_config provided)
@@ -738,8 +729,6 @@ class StreamPump:
         from datetime import datetime, timezone
         from xml_pipeline.primitives import (
             Boot, handle_boot,
-            TodoUntil, TodoComplete,
-            handle_todo_until, handle_todo_complete,
         )
         from xml_pipeline.primitives.sequence import (
             SequenceStart, handle_sequence_start,
@@ -754,10 +743,6 @@ class StreamPump:
         system_listeners = [
             ("system.boot", Boot, handle_boot,
              "System boot handler - initializes organism"),
-            ("system.todo", TodoUntil, handle_todo_until,
-             "System todo handler - registers watchers"),
-            ("system.todo-complete", TodoComplete, handle_todo_complete,
-             "System todo handler - closes watchers"),
             ("system.sequence", SequenceStart, handle_sequence_start,
              "System sequence handler - chains listeners in order"),
             ("system.buffer", BufferStart, handle_buffer_start,
@@ -980,7 +965,6 @@ class StreamPump:
                     ))
                     # Ensure we have a valid thread chain
                     registry = get_registry()
-                    todo_registry = get_todo_registry()
                     context_buffer = get_context_buffer()
                     current_thread = state.thread_id or ""
 
@@ -991,25 +975,8 @@ class StreamPump:
                         from_id = state.from_id or "external"
                         registry.register_thread(current_thread, from_id, listener.name)
 
-                    # Check for todo matches on this message
-                    # This may raise eyebrows on watchers for this thread
-                    if current_thread and state.payload:
-                        payload_type = type(state.payload).__name__
-                        todo_registry.check(
-                            thread_id=current_thread,
-                            payload_type=payload_type,
-                            from_id=state.from_id or "",
-                            payload=state.payload,
-                        )
-
                     # Detect self-calls (agent sending to itself)
                     is_self_call = (state.from_id or "") == listener.name
-
-                    # Get any raised eyebrows for this agent (for nagging)
-                    todo_nudge = ""
-                    if listener.is_agent and current_thread:
-                        raised = todo_registry.get_raised_for(current_thread, listener.name)
-                        todo_nudge = todo_registry.format_nudge(raised)
 
                     # === PEER TABLE: Resolve effective usage_instructions ===
                     # If the thread belongs to a peer table, use table-specific
@@ -1035,7 +1002,6 @@ class StreamPump:
                                 own_name=listener.name if listener.is_agent else None,
                                 is_self_call=is_self_call,
                                 usage_instructions=effective_usage_instructions,
-                                todo_nudge=todo_nudge,
                             )
                         except MemoryError:
                             # Thread exceeded max slots - log and continue
@@ -1057,7 +1023,6 @@ class StreamPump:
                             own_name=listener.name if listener.is_agent else None,
                             is_self_call=is_self_call,
                             usage_instructions=effective_usage_instructions,
-                            todo_nudge=todo_nudge,
                         )
                         payload_ref = state.payload
 

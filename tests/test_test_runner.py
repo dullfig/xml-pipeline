@@ -165,8 +165,7 @@ class TestHandleTestRun:
         )
         meta = HandlerMetadata(
             thread_id="t1", from_id="coord", own_name="test-runner",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_test_run(msg, meta)
         assert resp is not None
         assert resp.payload.status == "error"
@@ -183,8 +182,7 @@ class TestHandleTestRun:
         )
         meta = HandlerMetadata(
             thread_id="t1", from_id="coord", own_name="test-runner",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_test_run(msg, meta)
         assert resp is not None
         assert resp.payload.status == "error"
@@ -206,8 +204,7 @@ class TestHandleTestRun:
         )
         meta = HandlerMetadata(
             thread_id="t1", from_id="coord", own_name="test-runner",
-            is_self_call=False, usage_instructions="", todo_nudge="",
-        )
+            is_self_call=False, usage_instructions="",        )
         resp = await handle_test_run(msg, meta)
         assert resp is not None
         assert resp.payload.status == "error"

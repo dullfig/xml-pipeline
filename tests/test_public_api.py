@@ -227,8 +227,6 @@ class TestStreamPumpStart:
 
         # System listeners should be registered
         assert "system.boot" in pump.listeners
-        assert "system.todo" in pump.listeners
-        assert "system.todo-complete" in pump.listeners
         assert "system.sequence" in pump.listeners
         assert "system.buffer" in pump.listeners
 

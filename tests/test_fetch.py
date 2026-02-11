@@ -66,7 +66,6 @@ def _metadata() -> HandlerMetadata:
         own_name=None,
         is_self_call=False,
         usage_instructions="",
-        todo_nudge="",
     )
 
 

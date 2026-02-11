@@ -62,7 +62,6 @@ class SlotMetadata:
     own_name: Optional[str] = None
     is_self_call: bool = False
     usage_instructions: str = ""
-    todo_nudge: str = ""
 
 
 @dataclass(frozen=True)
@@ -114,7 +113,6 @@ class ThreadContext:
         own_name: Optional[str] = None,
         is_self_call: bool = False,
         usage_instructions: str = "",
-        todo_nudge: str = "",
     ) -> BufferSlot:
         """
         Append a validated payload to this thread's context.
@@ -134,7 +132,6 @@ class ThreadContext:
                 own_name=own_name,
                 is_self_call=is_self_call,
                 usage_instructions=usage_instructions,
-                todo_nudge=todo_nudge,
             )
 
             slot = BufferSlot(payload=payload, metadata=metadata)
@@ -234,7 +231,6 @@ class ContextBuffer:
         own_name: Optional[str] = None,
         is_self_call: bool = False,
         usage_instructions: str = "",
-        todo_nudge: str = "",
     ) -> BufferSlot:
         """
         Append a validated payload to a thread's context.
@@ -254,7 +250,6 @@ class ContextBuffer:
                 own_name=own_name,
                 is_self_call=is_self_call,
                 usage_instructions=usage_instructions,
-                todo_nudge=todo_nudge,
             )
 
         # Local mode: use ThreadContext
@@ -273,7 +268,6 @@ class ContextBuffer:
             own_name=own_name,
             is_self_call=is_self_call,
             usage_instructions=usage_instructions,
-            todo_nudge=todo_nudge,
         )
 
     def _append_shared(
@@ -285,7 +279,6 @@ class ContextBuffer:
         own_name: Optional[str] = None,
         is_self_call: bool = False,
         usage_instructions: str = "",
-        todo_nudge: str = "",
     ) -> BufferSlot:
         """Append to shared backend."""
         from xml_pipeline.memory.shared_backend import serialize_slot
@@ -312,7 +305,6 @@ class ContextBuffer:
             own_name=own_name,
             is_self_call=is_self_call,
             usage_instructions=usage_instructions,
-            todo_nudge=todo_nudge,
         )
 
         # Create slot
@@ -484,5 +476,4 @@ def slot_to_handler_metadata(slot: BufferSlot) -> 'HandlerMetadata':
         own_name=slot.metadata.own_name,
         is_self_call=slot.metadata.is_self_call,
         usage_instructions=slot.metadata.usage_instructions,
-        todo_nudge=slot.metadata.todo_nudge,
     )

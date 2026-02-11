@@ -28,7 +28,6 @@ class HandlerMetadata:
     own_name: str | None = None          # Only for agent: true listeners
     is_self_call: bool = False           # Convenience flag
     usage_instructions: str = ""         # Peer schemas for LLM prompts
-    todo_nudge: str = ""                 # Raised eyebrows: "your todos appear complete"
 
 
 class _ResponseMarker:

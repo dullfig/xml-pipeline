@@ -278,7 +278,6 @@ class TestResolveOsUser:
             own_name=None,
             is_self_call=False,
             usage_instructions="",
-            todo_nudge="",
         )
 
     def test_no_pump_returns_none(self) -> None:
@@ -345,7 +344,6 @@ class TestHandleShell:
             own_name=None,
             is_self_call=False,
             usage_instructions="",
-            todo_nudge="",
         )
 
     @pytest.mark.asyncio

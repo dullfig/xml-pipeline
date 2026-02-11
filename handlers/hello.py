@@ -57,35 +57,11 @@ async def handle_greeting(payload: Greeting, metadata: HandlerMetadata) -> Handl
 
     Flow: console-router -> greeter -> shouter -> response-handler
 
-    Demonstrates TodoUntil pattern:
-    1. Register a watcher for ShoutedResponse from shouter
-    2. Send GreetingResponse to shouter
-    3. When ShoutedResponse appears, eyebrow is raised
-    4. On next invocation, greeter sees nudge and can close the todo
-
     NOTE: This handler uses platform.complete() for LLM calls.
     The system prompt is managed by the platform (from organism.yaml).
     The handler cannot see or modify the prompt.
     """
     from xml_pipeline.platform import complete
-    from xml_pipeline.message_bus.todo_registry import get_todo_registry
-
-    # Check for any raised todos and close them
-    todo_registry = get_todo_registry()
-    if metadata.todo_nudge:
-        # We have raised todos - check and close them
-        raised = todo_registry.get_raised_for(metadata.thread_id, metadata.own_name or "greeter")
-        for watcher in raised:
-            todo_registry.close(watcher.id)
-
-    # Register a todo watcher - we want to know when shouter responds
-    todo_registry.register(
-        thread_id=metadata.thread_id,
-        issuer=metadata.own_name or "greeter",
-        wait_for="ShoutedResponse",
-        from_listener="shouter",
-        description=f"waiting for shouter to process greeting for {payload.name}",
-    )
 
     # Use platform.complete() for LLM call
     # The platform assembles: system prompt (from registry) + peer schemas + history + user message

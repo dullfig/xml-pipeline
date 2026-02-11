@@ -288,7 +288,6 @@ class TestHandlerMetadataAdapter:
             own_name="test-agent",
             is_self_call=True,
             usage_instructions="instructions here",
-            todo_nudge="nudge here",
         )
 
         metadata = slot_to_handler_metadata(slot)
@@ -298,7 +297,6 @@ class TestHandlerMetadataAdapter:
         assert metadata.own_name == "test-agent"
         assert metadata.is_self_call is True
         assert metadata.usage_instructions == "instructions here"
-        assert metadata.todo_nudge == "nudge here"
 
 
 class TestSingleton:
