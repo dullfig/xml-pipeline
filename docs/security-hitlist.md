@@ -297,14 +297,16 @@ hardened parser (`resolve_entities=False, no_network=True, huge_tree=False`).
 
 ## P1 — Round 2 (Added 2026-02-10, second pass)
 
-### [ ] 40. REST API has zero authentication
-**File:** `server/api.py`
+### [x] 40. REST API has zero authentication
+**File:** `server/api.py`, `server/auth.py`
 **Issue:** All endpoints are completely unprotected. `/api/v1/inject` allows message
 injection, `/api/v1/organism/reload` triggers hot-reload, `/api/v1/threads/{id}/kill`
 terminates threads, `/api/v1/usage/reset` wipes billing data. Anyone who can reach
 the port can do all of this.
-**Fix:** Add token-based auth middleware (API key or JWT). At minimum, protect
-mutating endpoints (`inject`, `reload`, `kill`, `reset`, `pause`, `resume`, `stop`).
+**Fix:** Added Bearer token auth via `auth.api_key_env` config. All 7 POST endpoints
+require `Depends(require_auth)`. WebSocket inject command also requires token when
+auth enabled. GET endpoints remain open for monitoring. Auth disabled by default
+(backward compatible). Uses `secrets.compare_digest()` for timing-safe comparison.
 
 ### [ ] 41. LLM response not validated
 **File:** `llm/backend.py` (all 4 backends)
@@ -315,12 +317,15 @@ on response content (memory DoS if provider returns huge payload).
 `message.content` is a string, cap content at 1 MB. Wrap in try/except with
 `BackendError` on validation failure.
 
-### [ ] 42. Fetch SSRF: IPv6 bypass
+### [x] 42. Fetch SSRF: IPv6 bypass
 **File:** `tools/fetch.py:60-81`
 **Issue:** `socket.gethostbyname()` resolves IPv4 only. Requests to `http://[::1]/`
 or `http://[::ffff:169.254.169.254]/` bypass all private IP checks entirely.
-**Fix:** Replace `socket.gethostbyname()` with `socket.getaddrinfo()` which resolves
-both IPv4 and IPv6. Check all returned addresses against `_is_dangerous_ip()`.
+**Fix:** Replaced `socket.gethostbyname()` with `socket.getaddrinfo()`. Iterates
+ALL returned addresses (IPv4 + IPv6), blocks if ANY is dangerous. Strips `%zone_id`
+from IPv6 before parsing. Added `::ffff:127.0.0.1` and `::ffff:169.254.169.254`
+to `BLOCKED_HOSTS` as belt-and-suspenders. Catches `OSError` in addition to
+`gaierror`/`herror`.
 
 ### [ ] 43. Handler integrity check hashes .py, Python runs .pyc
 **File:** `config_loader.py:199-212`

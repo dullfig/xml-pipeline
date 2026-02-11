@@ -13,7 +13,9 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from xml_pipeline.server.auth import require_auth
 
 from xml_pipeline.server.models import (
     AgentInfo,
@@ -211,7 +213,7 @@ def create_router(state: "ServerState") -> APIRouter:
             limit=limit,
         )
 
-    @router.post("/threads/{thread_id}/kill")
+    @router.post("/threads/{thread_id}/kill", dependencies=[Depends(require_auth)])
     async def kill_thread(thread_id: str) -> dict:
         """Terminate a thread."""
         thread = state.get_thread(thread_id)
@@ -418,7 +420,7 @@ def create_router(state: "ServerState") -> APIRouter:
             total_cost=data["total_cost"],
         )
 
-    @router.post("/usage/reset")
+    @router.post("/usage/reset", dependencies=[Depends(require_auth)])
     async def reset_usage() -> dict:
         """
         Reset all usage tracking (for testing/development).
@@ -568,7 +570,7 @@ def create_router(state: "ServerState") -> APIRouter:
     # Control Endpoints
     # =========================================================================
 
-    @router.post("/inject", response_model=InjectResponse)
+    @router.post("/inject", response_model=InjectResponse, dependencies=[Depends(require_auth)])
     async def inject_message(request: InjectRequest) -> InjectResponse:
         """Inject a message to an agent."""
         # Validate target exists
@@ -600,7 +602,7 @@ def create_router(state: "ServerState") -> APIRouter:
 
         return InjectResponse(thread_id=thread_id, message_id=msg_id)
 
-    @router.post("/agents/{name}/pause")
+    @router.post("/agents/{name}/pause", dependencies=[Depends(require_auth)])
     async def pause_agent(name: str) -> dict:
         """Pause an agent (stop processing new messages)."""
         agent = state.get_agent(name)
@@ -612,7 +614,7 @@ def create_router(state: "ServerState") -> APIRouter:
         await state.update_agent_state(name, AgentState.PAUSED)
         return {"success": True, "agent": name, "state": "paused"}
 
-    @router.post("/agents/{name}/resume")
+    @router.post("/agents/{name}/resume", dependencies=[Depends(require_auth)])
     async def resume_agent(name: str) -> dict:
         """Resume a paused agent."""
         agent = state.get_agent(name)
@@ -624,7 +626,7 @@ def create_router(state: "ServerState") -> APIRouter:
         await state.update_agent_state(name, AgentState.IDLE)
         return {"success": True, "agent": name, "state": "idle"}
 
-    @router.post("/organism/reload")
+    @router.post("/organism/reload", dependencies=[Depends(require_auth)])
     async def reload_config() -> dict:
         """
         Hot-reload organism configuration.
@@ -642,7 +644,7 @@ def create_router(state: "ServerState") -> APIRouter:
             )
         return result
 
-    @router.post("/organism/stop")
+    @router.post("/organism/stop", dependencies=[Depends(require_auth)])
     async def stop_organism() -> dict:
         """Graceful shutdown."""
         state.set_stopping()

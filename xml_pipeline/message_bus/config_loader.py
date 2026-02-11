@@ -45,6 +45,7 @@ class ConfigLoader:
         auth = raw.get("auth", {})
         auth_totp_secret_env = auth.get("totp_secret_env", "") if auth else ""
         auth_totp_required = auth.get("totp_required", False) if auth else False
+        auth_api_key_env = auth.get("api_key_env", "") if auth else ""
 
         # Parse peer tables
         peer_table_configs: List[Dict[str, Any]] = []
@@ -132,6 +133,7 @@ class ConfigLoader:
             oob_port=oob_port,
             auth_totp_secret_env=auth_totp_secret_env,
             auth_totp_required=auth_totp_required,
+            auth_api_key_env=auth_api_key_env,
             peer_table_configs=peer_table_configs,
             network_ports=network_ports,
             wasm_tool_configs=wasm_tool_configs,

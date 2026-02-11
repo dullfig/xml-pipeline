@@ -35,6 +35,8 @@ BLOCKED_HOSTS = {
     "127.0.0.1",
     "0.0.0.0",
     "::1",
+    "::ffff:127.0.0.1",          # IPv6-mapped loopback
+    "::ffff:169.254.169.254",    # IPv6-mapped metadata
     "metadata.google.internal",  # GCP metadata
     "169.254.169.254",  # AWS/Azure/GCP metadata
 }
@@ -60,19 +62,32 @@ def _is_dangerous_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 def _is_private_ip(hostname: str) -> bool:
     """Check if hostname resolves to a private/internal IP.
 
-    Always resolves through DNS to catch hex/octal IP encoding bypasses.
+    Uses getaddrinfo() to resolve both IPv4 and IPv6 addresses.
+    Blocks if ANY returned address is dangerous (fail-closed).
     """
     try:
-        # Always resolve hostname to canonical IP first (catches hex/octal tricks)
-        ip_str = socket.gethostbyname(hostname)
-        ip = ipaddress.ip_address(ip_str)
-        return _is_dangerous_ip(ip)
-    except (socket.gaierror, socket.herror):
+        # Resolve ALL addresses (IPv4 + IPv6) via getaddrinfo
+        results = socket.getaddrinfo(hostname, None)
+        if not results:
+            return True  # No results — block by default
+
+        for family, _type, _proto, _canonname, sockaddr in results:
+            ip_str = sockaddr[0]
+            # Strip IPv6 zone ID (e.g., "fe80::1%eth0" → "fe80::1")
+            if "%" in ip_str:
+                ip_str = ip_str.split("%")[0]
+            ip = ipaddress.ip_address(ip_str)
+            if _is_dangerous_ip(ip):
+                return True
+        return False
+    except (socket.gaierror, socket.herror, OSError):
         pass
 
     # Fallback: try parsing as literal IP (handles cases where DNS is unavailable)
     try:
-        ip = ipaddress.ip_address(hostname)
+        # Strip zone ID from literal IPv6 too
+        clean = hostname.split("%")[0] if "%" in hostname else hostname
+        ip = ipaddress.ip_address(clean)
         return _is_dangerous_ip(ip)
     except ValueError:
         pass

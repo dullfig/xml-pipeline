@@ -24,9 +24,10 @@ oob:                                            # Out-of-band privileged channel
   port: 8766                                    # Separate WSS port from main bus
   # unix_socket: "/tmp/organism.sock"           # Alternative binding
 
-auth:                                           # Authentication for OOB channel
+auth:                                           # Authentication
   totp_secret_env: ORGANISM_TOTP_SECRET         # Env var holding base32 TOTP secret
   totp_required: true                           # Require TOTP on OOB connections
+  api_key_env: ORGANISM_API_KEY                 # Env var holding REST API Bearer token
 
 thread_scheduling: "breadth-first"              # or "depth-first"
 
@@ -162,9 +163,10 @@ Privileged local control channel (GUI/hot-reload ready).
 - Bound to localhost by default for security.
 
 #### `auth`
-Authentication settings for the OOB privileged channel.
+Authentication settings for OOB channel and REST API.
 - `totp_secret_env`: Environment variable name holding the base32 TOTP secret. When set, OOB connections require TOTP as a second factor alongside Ed25519 signing.
 - `totp_required`: If `true`, connections without a valid TOTP token are rejected. Generate a secret with `xml-pipeline keygen --totp`.
+- `api_key_env`: Environment variable name holding the REST API Bearer token. When set, all mutating POST endpoints (`/inject`, `/reload`, `/kill`, `/stop`, `/pause`, `/resume`, `/usage/reset`) require `Authorization: Bearer <token>`. GET endpoints remain open for monitoring. WebSocket inject commands also require the token. If empty or env var is unset, REST API auth is disabled (backward compatible).
 
 **TOTP handshake:** When `totp_secret_env` is configured, the first message on each OOB connection must be:
 ```xml

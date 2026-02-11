@@ -147,6 +147,7 @@ class TestValidateUrl:
     def test_all_blocked_hosts_present(self) -> None:
         expected = {
             "localhost", "127.0.0.1", "0.0.0.0", "::1",
+            "::ffff:127.0.0.1", "::ffff:169.254.169.254",
             "metadata.google.internal", "169.254.169.254",
         }
         assert BLOCKED_HOSTS == expected
@@ -212,18 +213,103 @@ class TestIsPrivateIp:
 
     # ── Hostname resolution ──────────────────────────────────────────────
 
-    @patch("socket.gethostbyname", return_value="10.0.0.5")
+    @patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("10.0.0.5", 0)),
+    ])
     def test_hostname_resolving_to_private(self, mock_dns: object) -> None:
         assert _is_private_ip("internal.corp.example.com") is True
 
-    @patch("socket.gethostbyname", return_value="93.184.216.34")
+    @patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+    ])
     def test_hostname_resolving_to_public(self, mock_dns: object) -> None:
         assert _is_private_ip("example.com") is False
 
-    @patch("socket.gethostbyname", side_effect=socket.gaierror("no such host"))
+    @patch("socket.getaddrinfo", side_effect=socket.gaierror("no such host"))
     def test_unresolvable_hostname_blocked(self, mock_dns: object) -> None:
         """Unresolvable hostnames treated as private (fail-closed)."""
         assert _is_private_ip("nonexistent.invalid") is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TestIPv6SSRF — IPv6 bypass protection (security hitlist #42)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestIPv6SSRF:
+    """_is_private_ip() and _validate_url() block IPv6 SSRF bypasses."""
+
+    # ── Direct IPv6 literals ──────────────────────────────────────────────
+
+    def test_ipv6_loopback_blocked(self) -> None:
+        assert _is_private_ip("::1") is True
+
+    def test_ipv6_link_local_blocked(self) -> None:
+        assert _is_private_ip("fe80::1") is True
+
+    def test_ipv6_unique_local_blocked(self) -> None:
+        assert _is_private_ip("fd00::1") is True
+
+    def test_ipv6_unspecified_blocked(self) -> None:
+        assert _is_private_ip("::") is True
+
+    def test_ipv6_mapped_loopback_blocked(self) -> None:
+        assert _is_private_ip("::ffff:127.0.0.1") is True
+
+    def test_ipv6_mapped_metadata_blocked(self) -> None:
+        assert _is_private_ip("::ffff:169.254.169.254") is True
+
+    def test_ipv6_mapped_private_blocked(self) -> None:
+        assert _is_private_ip("::ffff:10.0.0.1") is True
+
+    def test_ipv6_multicast_blocked(self) -> None:
+        assert _is_private_ip("ff02::1") is True
+
+    # ── URL-level IPv6 blocking ───────────────────────────────────────────
+
+    def test_url_ipv6_loopback_blocked(self) -> None:
+        error = _validate_url("http://[::1]/")
+        assert error is not None
+
+    def test_url_ipv6_mapped_metadata_blocked(self) -> None:
+        error = _validate_url("http://[::ffff:169.254.169.254]/")
+        assert error is not None
+
+    def test_url_ipv6_link_local_blocked(self) -> None:
+        error = _validate_url("http://[fe80::1]/")
+        assert error is not None
+
+    # ── DNS resolution to IPv6 ────────────────────────────────────────────
+
+    @patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("::1", 0, 0, 0)),
+    ])
+    def test_hostname_resolving_to_ipv6_loopback(self, mock_dns: object) -> None:
+        assert _is_private_ip("evil.example.com") is True
+
+    @patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("fe80::1", 0, 0, 0)),
+    ])
+    def test_dual_stack_safe_ipv4_dangerous_ipv6_blocked(self, mock_dns: object) -> None:
+        """If any address is dangerous, block the whole hostname."""
+        assert _is_private_ip("dual.example.com") is True
+
+    @patch("socket.getaddrinfo", return_value=[
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0)),
+        (socket.AF_INET6, socket.SOCK_STREAM, 0, "", ("2607:f8b0:4004:800::200e", 0, 0, 0)),
+    ])
+    def test_dual_stack_both_public_allowed(self, mock_dns: object) -> None:
+        assert _is_private_ip("safe.example.com") is False
+
+    @patch("socket.getaddrinfo", return_value=[])
+    def test_empty_dns_result_blocked(self, mock_dns: object) -> None:
+        """Empty getaddrinfo result → fail-closed."""
+        assert _is_private_ip("empty.example.com") is True
+
+    def test_zone_id_stripping(self) -> None:
+        """Zone IDs in IPv6 addresses should be stripped before checking."""
+        # fe80::1%eth0 is link-local → blocked
+        assert _is_private_ip("fe80::1%eth0") is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -5,6 +5,7 @@ Tests the REST API endpoints and WebSocket connections.
 """
 
 import asyncio
+import os
 import pytest
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -62,6 +63,7 @@ class MockConfig:
     thread_scheduling: str = "breadth-first"
     max_concurrent_pipelines: int = 50
     max_concurrent_handlers: int = 20
+    auth_api_key_env: str = ""
 
 
 class MockStreamPump:
@@ -1200,3 +1202,140 @@ class TestWebSocketIntegration:
 
             data = websocket.receive_json()
             assert data["event"] == "error"
+
+
+# ============================================================================
+# Test REST API Authentication (security hitlist #40)
+# ============================================================================
+
+class TestRestAPIAuth:
+    """Test API key authentication on mutating endpoints."""
+
+    API_KEY = "test-secret-key-12345"
+
+    @pytest.fixture(autouse=True)
+    def _enable_auth(self):
+        """Enable auth for each test, reset after."""
+        from xml_pipeline.server.auth import configure_auth
+        with patch.dict(os.environ, {"TEST_API_KEY": self.API_KEY}):
+            configure_auth("TEST_API_KEY")
+            yield
+        # Reset auth to disabled
+        configure_auth("")
+
+    @pytest.fixture
+    def auth_client(self):
+        """Test client with auth enabled."""
+        pump = MockStreamPump()
+        pump.config.auth_api_key_env = "TEST_API_KEY"
+        app = create_app(pump)
+        return TestClient(app)
+
+    def _auth_header(self) -> dict:
+        return {"Authorization": f"Bearer {self.API_KEY}"}
+
+    # ── 401 without auth header ───────────────────────────────────────
+
+    def test_inject_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/inject", json={"to": "greeter", "payload": {}})
+        assert resp.status_code == 401
+
+    def test_kill_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/threads/some-id/kill")
+        assert resp.status_code == 401
+
+    def test_pause_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/agents/greeter/pause")
+        assert resp.status_code == 401
+
+    def test_resume_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/agents/greeter/resume")
+        assert resp.status_code == 401
+
+    def test_reload_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/organism/reload")
+        assert resp.status_code == 401
+
+    def test_stop_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/organism/stop")
+        assert resp.status_code == 401
+
+    def test_usage_reset_requires_auth(self, auth_client):
+        resp = auth_client.post("/api/v1/usage/reset")
+        assert resp.status_code == 401
+
+    # ── 403 with wrong token ─────────────────────────────────────────
+
+    def test_inject_wrong_token(self, auth_client):
+        resp = auth_client.post(
+            "/api/v1/inject",
+            json={"to": "greeter", "payload": {}},
+            headers={"Authorization": "Bearer wrong-key"},
+        )
+        assert resp.status_code == 403
+
+    # ── 200 with correct token ───────────────────────────────────────
+
+    def test_inject_with_auth(self, auth_client):
+        resp = auth_client.post(
+            "/api/v1/inject",
+            json={"to": "greeter", "payload": {"name": "Dan"}},
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 200
+
+    def test_pause_with_auth(self, auth_client):
+        resp = auth_client.post(
+            "/api/v1/agents/greeter/pause",
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 200
+
+    def test_stop_with_auth(self, auth_client):
+        resp = auth_client.post(
+            "/api/v1/organism/stop",
+            headers=self._auth_header(),
+        )
+        assert resp.status_code == 200
+
+    # ── GET endpoints remain open ────────────────────────────────────
+
+    def test_get_organism_no_auth_needed(self, auth_client):
+        resp = auth_client.get("/api/v1/organism")
+        assert resp.status_code == 200
+
+    def test_get_agents_no_auth_needed(self, auth_client):
+        resp = auth_client.get("/api/v1/agents")
+        assert resp.status_code == 200
+
+    def test_health_no_auth_needed(self, auth_client):
+        resp = auth_client.get("/health")
+        assert resp.status_code == 200
+
+    # ── WebSocket inject auth ────────────────────────────────────────
+
+    def test_ws_inject_requires_token(self, auth_client):
+        """WebSocket inject without token returns error when auth enabled."""
+        with auth_client.websocket_connect("/ws") as websocket:
+            websocket.receive_json()  # connected event
+            websocket.send_json({
+                "cmd": "inject",
+                "to": "greeter",
+                "payload": {"name": "Dan"},
+            })
+            data = websocket.receive_json()
+            assert data["event"] == "error"
+            assert "auth" in data["error"].lower()
+
+    def test_ws_inject_with_token(self, auth_client):
+        """WebSocket inject with valid token succeeds."""
+        with auth_client.websocket_connect("/ws") as websocket:
+            websocket.receive_json()  # connected event
+            websocket.send_json({
+                "cmd": "inject",
+                "to": "greeter",
+                "payload": {"name": "Dan"},
+                "token": self.API_KEY,
+            })
+            data = websocket.receive_json()
+            assert data["event"] == "injected"

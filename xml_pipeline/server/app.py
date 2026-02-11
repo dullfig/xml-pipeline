@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from xml_pipeline.server.api import create_router
+from xml_pipeline.server.auth import configure_auth
 from xml_pipeline.server.state import ServerState
 from xml_pipeline.server.websocket import create_websocket_router
 
@@ -42,6 +43,10 @@ def create_app(
     """
     # Create state manager
     state = ServerState(pump)
+
+    # Configure REST API authentication
+    api_key_env = getattr(pump.config, "auth_api_key_env", "")
+    configure_auth(api_key_env)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:

@@ -66,6 +66,9 @@ class OrganismConfig:
     auth_totp_secret_env: str = ""
     auth_totp_required: bool = False
 
+    # Auth (API key for REST API)
+    auth_api_key_env: str = ""
+
     # Peer tables from YAML config
     # Each: {"name": str, "parent": str|None, "peers": {listener: [peers]}}
     peer_table_configs: List[Dict[str, Any]] = field(default_factory=list)

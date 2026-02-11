@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from xml_pipeline.server.auth import is_auth_enabled, verify_token
 from xml_pipeline.server.models import (
     SubscribeRequest,
     WSConnectedEvent,
@@ -333,6 +334,15 @@ def create_websocket_router(state: "ServerState") -> APIRouter:
                     await websocket.send_json({"event": "subscribed", "filters": data})
 
                 elif cmd == "inject":
+                    # Auth check for inject command
+                    if is_auth_enabled():
+                        token = data.get("token", "")
+                        if not verify_token(token):
+                            await websocket.send_json(
+                                {"event": "error", "error": "Authentication required for inject"}
+                            )
+                            continue
+
                     # Inject a message (same as REST /inject)
                     # TODO: Actual pump injection requires resolving the
                     # payload class from the JSON target name, which needs
