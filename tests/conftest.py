@@ -4,6 +4,7 @@ conftest.py — Shared pytest configuration and fixtures
 This file is automatically loaded by pytest.
 """
 
+import os
 import pytest
 import sys
 from pathlib import Path
@@ -35,6 +36,27 @@ def pytest_configure(config):
 # ============================================================================
 # Fixtures available to all tests
 # ============================================================================
+
+@pytest.fixture(autouse=True, scope="session")
+def _ensure_llm_api_keys():
+    """Set dummy API keys so tests loading config/organism.yaml don't fail.
+
+    The example config references XAI_API_KEY. Tests never make real LLM
+    calls, but create_backend() now validates keys at construction time (#46).
+    """
+    keys = {"XAI_API_KEY": "test-dummy-key"}
+    saved = {}
+    for k, v in keys.items():
+        saved[k] = os.environ.get(k)
+        if not os.environ.get(k):
+            os.environ[k] = v
+    yield
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
 
 @pytest.fixture(autouse=True)
 def reset_singletons():

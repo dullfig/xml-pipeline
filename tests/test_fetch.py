@@ -14,6 +14,7 @@ from xml_pipeline.tools.fetch import (
     ALLOWED_SCHEMES,
     BLOCKED_HOSTS,
     DEFAULT_TIMEOUT,
+    MAX_REQUEST_BODY,
     MAX_RESPONSE_SIZE,
     FetchRequest,
     FetchResponse,
@@ -694,3 +695,41 @@ class TestConstants:
 
     def test_max_response_size(self) -> None:
         assert MAX_RESPONSE_SIZE == 10 * 1024 * 1024
+
+    def test_max_request_body(self) -> None:
+        assert MAX_REQUEST_BODY == 1_048_576
+
+
+# ============================================================================
+# #47 — Request body size limit
+# ============================================================================
+
+
+class TestRequestBodySizeLimit:
+    """Test that request body size is limited."""
+
+    async def test_body_exceeding_limit_raises(self) -> None:
+        huge_body = "x" * (MAX_REQUEST_BODY + 1)
+        with pytest.raises(ValueError, match="Request body exceeds maximum size"):
+            await _do_fetch(
+                url="https://example.com",
+                method="POST",
+                body=huge_body,
+            )
+
+    @patch("xml_pipeline.tools.fetch._is_private_ip", return_value=False)
+    async def test_body_at_limit_accepted(self, _mock_ip) -> None:
+        """Body exactly at the limit should not raise the size error."""
+        body_at_limit = "x" * MAX_REQUEST_BODY
+        # Will fail with a connection error (not body size error)
+        # since we don't mock the HTTP client, but that proves
+        # the body size check passed
+        try:
+            await _do_fetch(
+                url="https://example.com",
+                method="POST",
+                body=body_at_limit,
+            )
+        except Exception as e:
+            # Should NOT be the body size error
+            assert "Request body exceeds" not in str(e)

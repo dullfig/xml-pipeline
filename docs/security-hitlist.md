@@ -308,14 +308,15 @@ require `Depends(require_auth)`. WebSocket inject command also requires token wh
 auth enabled. GET endpoints remain open for monitoring. Auth disabled by default
 (backward compatible). Uses `secrets.compare_digest()` for timing-safe comparison.
 
-### [ ] 41. LLM response not validated
+### [x] 41. LLM response not validated
 **File:** `llm/backend.py` (all 4 backends)
 **Issue:** All backends blindly trust `resp.json()["choices"][0]["message"]["content"]`.
 Malformed provider response → unhandled `KeyError`/`TypeError` crash. No size cap
 on response content (memory DoS if provider returns huge payload).
-**Fix:** Add `_validate_response()` helper: check `choices` is non-empty list,
-`message.content` is a string, cap content at 1 MB. Wrap in try/except with
-`BackendError` on validation failure.
+**Fix:** Added `_validate_llm_response(data, provider)` helper shared by all backends.
+Validates response structure per provider. Caps content at 1 MB with warning log.
+All 4 `_do_completion()` methods wrapped in try/except `(KeyError, TypeError, IndexError)`
+→ `BackendError("Malformed provider response")`.
 
 ### [x] 42. Fetch SSRF: IPv6 bypass
 **File:** `tools/fetch.py:60-81`
@@ -327,80 +328,83 @@ from IPv6 before parsing. Added `::ffff:127.0.0.1` and `::ffff:169.254.169.254`
 to `BLOCKED_HOSTS` as belt-and-suspenders. Catches `OSError` in addition to
 `gaierror`/`herror`.
 
-### [ ] 43. Handler integrity check hashes .py, Python runs .pyc
+### [x] 43. Handler integrity check hashes .py, Python runs .pyc
 **File:** `config_loader.py:199-212`
 **Issue:** `handler_sha256` reads and hashes the `.py` source file, but Python may
 load bytecode from `__pycache__/*.pyc` instead. An attacker with write access to
 the pycache can poison the `.pyc` while leaving the `.py` (and its hash) untouched.
-**Fix:** After import, hash the loaded module's `__file__` resolved through
-`Path.resolve()` (follow symlinks). Also consider invalidating `.pyc` files by
-setting `dont_write_bytecode` or checking `importlib.util.source_hash()`.
+**Fix:** After import, resolve `__file__` via `Path.resolve()` (follows symlinks).
+If `.pyc`, use `importlib.util.source_from_cache()` to find source `.py` and hash
+that. Missing `.py` for a `.pyc` raises ValueError (suspicious state).
 
-### [ ] 44. Server state: unbounded message list
+### [x] 44. Server state: unbounded message list
 **File:** `server/state.py`
 **Issue:** `self._messages: List[MessageRecord]` grows without bound. Long-running
 organisms accumulate messages forever → OOM.
-**Fix:** Switch to `collections.deque(maxlen=10_000)` or implement age-based
-eviction. Completed threads' messages can be discarded after a TTL.
+**Fix:** Switched to `collections.deque(maxlen=10_000)`. Auto-evicts oldest messages
+when full. No API changes — `get_messages()` uses `list()` on the deque.
 
-### [ ] 45. Config loader accepts relative imports
+### [x] 45. Config loader accepts relative imports
 **File:** `config_loader.py:169-185`
 **Issue:** `_validate_import_path()` regex `^[a-zA-Z_][a-zA-Z0-9_.]*$` allows
 leading dots after the first character (e.g., `a...evil.module`). Also doesn't
 reject empty segments from consecutive dots (e.g., `foo..bar`).
-**Fix:** Add check: reject paths containing `..` (consecutive dots) and validate
-each segment individually matches `^[a-zA-Z_][a-zA-Z0-9_]*$` (no dots within
-segments).
+**Fix:** Added `".."` substring check and per-segment validation against
+`^[a-zA-Z_][a-zA-Z0-9_]*$`. Consecutive dots and invalid segments now rejected.
 
 ---
 
 ## P2 — Round 2 (Added 2026-02-10, second pass)
 
-### [ ] 46. LLM: empty API key accepted silently
+### [x] 46. LLM: empty API key accepted silently
 **File:** `llm/backend.py:415-421`
 **Issue:** If `api_key_env` points to an unset environment variable,
 `os.environ.get()` returns `""`. Backend initializes with empty key and only
 fails at first LLM call, not at startup.
-**Fix:** Validate API key is non-empty at backend construction time. Raise
-`ValueError` if `api_key_env` is set but env var is missing/empty (except
-Ollama which is unauthenticated).
+**Fix:** Added validation in `create_backend()`: if `provider != "ollama"` and
+`api_key` is empty/falsy, raises `ValueError` at construction time. Ollama
+(unauthenticated) is exempt.
 
-### [ ] 47. Fetch: no request body size limit
+### [x] 47. Fetch: no request body size limit
 **File:** `tools/fetch.py:113-157`
 **Issue:** POST/PUT `body` parameter has no size limit. Attacker can amplify
 traffic by sending huge request bodies to external targets.
-**Fix:** Add `MAX_REQUEST_BODY = 1_048_576` (1 MB) check before making request.
+**Fix:** Added `MAX_REQUEST_BODY = 1_048_576` (1 MB) constant. Checked in
+`_do_fetch()` before HTTP call. Raises `ValueError` if exceeded.
 
-### [ ] 48. Config: no port range validation
+### [x] 48. Config: no port range validation
 **File:** `config_loader.py:74-80`
 **Issue:** Network port parsed as `int()` with no range check. `port: 99999`
 or `port: -1` accepted without error.
-**Fix:** Validate `1 <= port <= 65535`. Check for conflicts with main bus port
-and OOB port.
+**Fix:** Added `_validate_port()` helper. Applied to organism port, OOB port,
+and all network port allocations. Raises `ValueError` for ports outside 1-65535.
 
-### [ ] 49. Pipeline fan-out amplification
+### [x] 49. Pipeline fan-out amplification
 **File:** `stream_pump.py`
 **Issue:** 1 message to N broadcast listeners → N responses → N² re-injections.
 Queue is bounded at 10K but amplification within that bound fills it fast from
 a single crafted message.
-**Fix:** Track message depth/ancestry. Reject re-injection beyond depth limit
-(e.g., 20 hops). Log warning on fan-out exceeding threshold.
+**Fix:** Added `MAX_MESSAGE_DEPTH = 50` constant. Depth tracked in
+`state.metadata["depth"]` and incremented on each re-injection. Messages exceeding
+depth limit are dropped with warning log.
 
-### [ ] 50. Error messages leak topology
+### [x] 50. Error messages leak topology
 **File:** `stream_pump.py:1145-1147`, `system_pipeline.py:240-242`
 **Issue:** Peer violation log reveals full peer list:
 `"allowed: [calc, search, billing]"`. Handler crash message includes listener
 name and raw exception. System pipeline reveals available listener names on
 unknown target.
-**Fix:** Return generic error to caller (`"routing error"`). Keep detailed info
-in server-side logs only. Never expose peer lists or listener names in messages
-sent back to handlers.
+**Fix:** `system_pipeline.py`: removed available listener list from unknown target
+error; removed username from rate limit error. Detailed info kept in server-side
+`logger.warning()` calls only. `stream_pump.py` peer violation already uses generic
+`ROUTING_ERROR` for agents — only server-side log has details (confirmed safe).
 
-### [ ] 51. KV: no key name/length validation
+### [x] 51. KV: no key name/length validation
 **File:** `tools/keyvalue.py:267-285`
 **Issue:** Key names have no length or character restrictions. Arbitrarily long
 keys cause resource waste. No namespace collision prevention beyond prefix.
-**Fix:** Max key length 256 chars. Restrict to `^[a-zA-Z0-9_:.-]+$`.
+**Fix:** Added `_validate_key()` helper: max 256 chars, pattern `^[a-zA-Z0-9_:.\-]+$`,
+empty key rejected. Called in `key_value_get()`, `key_value_set()`, `key_value_delete()`.
 
 ---
 

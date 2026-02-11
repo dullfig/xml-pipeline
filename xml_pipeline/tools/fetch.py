@@ -26,6 +26,7 @@ from .base import tool, ToolResult
 
 # Security configuration
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_REQUEST_BODY = 1_048_576  # 1 MB
 MAX_REDIRECTS = 5
 DEFAULT_TIMEOUT = 30
 ALLOWED_SCHEMES = {"http", "https"}
@@ -154,6 +155,12 @@ async def _do_fetch(
     method = method.upper()
     if method not in ALLOWED_METHODS:
         raise ValueError(f"Method '{method}' not allowed")
+
+    # Validate request body size
+    if body and len(body) > MAX_REQUEST_BODY:
+        raise ValueError(
+            f"Request body exceeds maximum size ({MAX_REQUEST_BODY} bytes)"
+        )
 
     # Clamp timeout
     timeout = min(max(1, timeout), 300)

@@ -432,3 +432,47 @@ class TestKeyValueFallback:
             await key_value_set(key="k", value="v")
             result = await key_value_get(key="k")
             assert result.data == "v"
+
+
+# ============================================================================
+# #51 — Key name/length validation
+# ============================================================================
+
+class TestKeyValidation:
+    """Test key name and length restrictions."""
+
+    async def test_valid_key_accepted(self):
+        result = await key_value_set(key="my_key-1.0:ns", value="v")
+        assert result.success is True
+
+    async def test_empty_key_rejected(self):
+        """Empty key should be rejected (ValueError caught by @tool)."""
+        from xml_pipeline.tools.keyvalue import _validate_key
+        with pytest.raises(ValueError, match="must not be empty"):
+            _validate_key("")
+
+    async def test_key_too_long_rejected(self):
+        """Key exceeding 256 chars should be rejected."""
+        from xml_pipeline.tools.keyvalue import _validate_key
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            _validate_key("a" * 257)
+
+    async def test_key_with_spaces_rejected(self):
+        from xml_pipeline.tools.keyvalue import _validate_key
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_key("has space")
+
+    async def test_key_with_special_chars_rejected(self):
+        from xml_pipeline.tools.keyvalue import _validate_key
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_key("key;drop table")
+
+    async def test_key_at_max_length_accepted(self):
+        key = "a" * 256
+        result = await key_value_set(key=key, value="v")
+        assert result.success is True
+
+    async def test_key_with_slash_rejected(self):
+        from xml_pipeline.tools.keyvalue import _validate_key
+        with pytest.raises(ValueError, match="invalid characters"):
+            _validate_key("path/to/key")

@@ -12,11 +12,12 @@ This is the bridge between the StreamPump and the API.
 from __future__ import annotations
 
 import asyncio
+import collections
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Callable, Deque, Dict, List, Optional, Set
 
 from xml_pipeline.server.models import (
     AgentInfo,
@@ -100,7 +101,7 @@ class ServerState:
         # Runtime state
         self._agents: Dict[str, AgentRuntimeState] = {}
         self._threads: Dict[str, ThreadRuntimeState] = {}
-        self._messages: List[MessageRecord] = []
+        self._messages: Deque[MessageRecord] = collections.deque(maxlen=10_000)
         self._message_count = 0
 
         # Event subscribers (WebSocket connections)
@@ -527,7 +528,7 @@ class ServerState:
         offset: int = 0,
     ) -> tuple[List[MessageInfo], int]:
         """Get messages with optional filtering."""
-        messages = self._messages.copy()
+        messages = list(self._messages)
 
         # Filter
         if thread_id:

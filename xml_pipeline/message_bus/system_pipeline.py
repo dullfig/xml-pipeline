@@ -238,14 +238,18 @@ class SystemPipeline:
         """
         # Check target exists
         if msg.target not in self.pump.listeners:
-            available = list(self.pump.listeners.keys())
-            raise ValueError(f"Unknown target: {msg.target}. Available: {available}")
+            logger.warning(
+                f"Unknown target: {msg.target} "
+                f"(available: {list(self.pump.listeners.keys())})"
+            )
+            raise ValueError(f"Unknown target: {msg.target}")
 
         # Rate limiting (simple per-user counter)
         if msg.user:
             count = self._rate_limits.get(msg.user, 0)
             if count >= self._max_rate:
-                raise ValueError(f"Rate limit exceeded for user {msg.user}")
+                logger.warning(f"Rate limit exceeded for user {msg.user}")
+                raise ValueError("Rate limit exceeded")
             self._rate_limits[msg.user] = count + 1
 
     def _create_payload(self, msg: ExternalMessage) -> TextInput:

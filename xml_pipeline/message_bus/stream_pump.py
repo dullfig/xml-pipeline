@@ -38,6 +38,9 @@ from xml_pipeline.memory import get_context_buffer
 
 pump_logger = logging.getLogger(__name__)
 
+# Maximum message depth to prevent fan-out amplification
+MAX_MESSAGE_DEPTH = 50
+
 
 from xml_pipeline.message_bus.events import (
     PumpEvent,
@@ -952,6 +955,15 @@ class StreamPump:
             yield state
             return
 
+        # Depth limit: prevent fan-out amplification
+        depth = state.metadata.get("depth", 0)
+        if depth > MAX_MESSAGE_DEPTH:
+            pump_logger.warning(
+                f"Message depth {depth} exceeds limit {MAX_MESSAGE_DEPTH}, "
+                f"dropping message to {state.to_id} in thread {(state.thread_id or '')[:8]}..."
+            )
+            return
+
         for listener in state.target_listeners:
             try:
                 # Rate limiting for agents
@@ -1097,6 +1109,7 @@ class StreamPump:
                             raw_bytes=error_bytes,
                             thread_id=current_thread,
                             from_id="system",
+                            metadata={"depth": depth + 1},
                         )
                         continue
 
@@ -1158,6 +1171,7 @@ class StreamPump:
                                         raw_bytes=error_bytes,
                                         thread_id=current_thread,
                                         from_id="system",
+                                        metadata={"depth": depth + 1},
                                     )
                                     continue
 
@@ -1216,6 +1230,7 @@ class StreamPump:
                         raw_bytes=response_bytes,
                         thread_id=thread_id,
                         from_id=listener.name,
+                        metadata={"depth": depth + 1},
                     )
 
                 finally:

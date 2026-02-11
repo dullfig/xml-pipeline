@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import importlib.util
 import re
 from pathlib import Path
 from typing import List, Dict, Any
@@ -19,6 +20,14 @@ from xml_pipeline.message_bus.pump_config import ListenerConfig, OrganismConfig
 
 
 class ConfigLoader:
+    @staticmethod
+    def _validate_port(port: int, context: str) -> None:
+        """Validate that a port number is in the valid range."""
+        if not (1 <= port <= 65535):
+            raise ValueError(
+                f"Invalid port {port} in {context}: must be between 1 and 65535"
+            )
+
     @classmethod
     def load(cls, path: str | Path) -> OrganismConfig:
         with open(Path(path)) as f:
@@ -35,11 +44,17 @@ class ConfigLoader:
         backend_redis_url = backend.get("redis_url", "redis://localhost:6379") if backend else "redis://localhost:6379"
         backend_redis_prefix = backend.get("redis_prefix", "xp:") if backend else "xp:"
 
+        # Validate organism port
+        org_port = org.get("port", 8765)
+        cls._validate_port(org_port, "organism.port")
+
         # Parse OOB config
         oob = raw.get("oob", {})
         oob_enabled = oob.get("enabled", True) if oob else True
         oob_bind = oob.get("bind", "127.0.0.1") if oob else "127.0.0.1"
         oob_port = oob.get("port", 8766) if oob else 8766
+        if oob:
+            cls._validate_port(oob_port, "oob.port")
 
         # Parse auth config
         auth = raw.get("auth", {})
@@ -73,8 +88,10 @@ class ConfigLoader:
         network = raw.get("network", {})
         if network:
             for port_raw in network.get("ports", []):
+                net_port = int(port_raw["port"])
+                cls._validate_port(net_port, f"network.ports[{net_port}]")
                 network_ports.append({
-                    "port": int(port_raw["port"]),
+                    "port": net_port,
                     "bind": port_raw.get("bind", "127.0.0.1"),
                     "listener": port_raw.get("listener", ""),
                     "protocol": port_raw.get("protocol", "tcp"),
@@ -168,19 +185,27 @@ class ConfigLoader:
             handler_sha256=raw.get("handler_sha256", ""),
         )
 
-    # Safe module path pattern: dotted identifiers only, no dunder segments
-    _SAFE_MODULE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
+    # Pattern for individual path segments: valid Python identifiers
+    _SAFE_SEGMENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
     @classmethod
     def _validate_import_path(cls, path: str, context: str) -> None:
         """Validate that an import path contains only safe characters."""
-        if not cls._SAFE_MODULE_RE.match(path):
+        # Reject consecutive dots (e.g., "foo..bar", "a...evil.module")
+        if ".." in path:
             raise ValueError(
                 f"Unsafe import path in {context}: {path!r} "
-                f"(must be dotted Python identifiers)"
+                f"(consecutive dots not allowed)"
             )
-        # Reject dunder segments (e.g., __builtins__, __import__)
-        for segment in path.split("."):
+        # Validate each segment individually
+        segments = path.split(".")
+        for segment in segments:
+            if not cls._SAFE_SEGMENT_RE.match(segment):
+                raise ValueError(
+                    f"Unsafe import path in {context}: {path!r} "
+                    f"(must be dotted Python identifiers)"
+                )
+            # Reject dunder segments (e.g., __builtins__, __import__)
             if segment.startswith("__") and segment.endswith("__"):
                 raise ValueError(
                     f"Dunder module segment not allowed in {context}: {segment!r}"
@@ -205,7 +230,25 @@ class ConfigLoader:
                     f"handler_sha256 set for '{lc.name}' but handler module "
                     f"'{handler_mod_path}' has no __file__ (built-in or frozen module)"
                 )
-            actual = hashlib.sha256(Path(module_file).read_bytes()).hexdigest()
+            resolved = Path(module_file).resolve()
+            # If Python loaded a .pyc, find the corresponding .py source
+            hash_target = resolved
+            if resolved.suffix == ".pyc":
+                try:
+                    source_path = importlib.util.source_from_cache(str(resolved))
+                except (ValueError, NotImplementedError):
+                    raise ValueError(
+                        f"Handler integrity check failed for '{lc.name}': "
+                        f".pyc loaded but cannot determine source path"
+                    )
+                source = Path(source_path)
+                if not source.exists():
+                    raise ValueError(
+                        f"Handler integrity check failed for '{lc.name}': "
+                        f".pyc loaded but source .py not found at {source_path}"
+                    )
+                hash_target = source
+            actual = hashlib.sha256(hash_target.read_bytes()).hexdigest()
             if actual != lc.handler_sha256:
                 raise ValueError(
                     f"Handler integrity check failed for '{lc.name}': "

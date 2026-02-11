@@ -1339,3 +1339,29 @@ class TestRestAPIAuth:
             })
             data = websocket.receive_json()
             assert data["event"] == "injected"
+
+
+# ============================================================================
+# #44 — Server state message list bounded (deque eviction)
+# ============================================================================
+
+
+class TestMessageEviction:
+    """Test that the message list is bounded by a deque."""
+
+    async def test_messages_evict_oldest_at_capacity(self, server_state):
+        """After recording 10_001 messages, oldest are evicted."""
+        for i in range(10_001):
+            await server_state.record_message(
+                thread_id="thread-1",
+                from_id="agent-a",
+                to_id="agent-b",
+                payload_type="TestPayload",
+                payload={"index": i},
+            )
+        messages, total = server_state.get_messages(limit=20_000)
+        assert len(messages) == 10_000
+        # The oldest message (index 0) should have been evicted
+        indices = [m.payload["index"] for m in messages]
+        assert 0 not in indices
+        assert 10_000 in indices

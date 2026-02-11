@@ -20,6 +20,9 @@ from xml_pipeline.llm.token_bucket import TokenBucket
 
 logger = logging.getLogger(__name__)
 
+# Maximum size for LLM response content (1 MB)
+MAX_RESPONSE_CONTENT = 1_048_576
+
 
 @dataclass
 class LLMRequest:
@@ -55,6 +58,61 @@ class RateLimitError(BackendError):
 class ProviderError(BackendError):
     """Provider returned an error (5xx, etc)."""
     status_code: int = None
+
+
+def _validate_llm_response(data: Any, provider: str) -> str:
+    """
+    Validate LLM provider response structure and extract content.
+
+    Returns the validated content string (truncated if > MAX_RESPONSE_CONTENT).
+    Raises BackendError on validation failure.
+    """
+    if not isinstance(data, dict):
+        raise BackendError("Malformed provider response")
+
+    content: str
+
+    if provider in ("xai", "openai"):
+        choices = data.get("choices")
+        if not isinstance(choices, list) or len(choices) == 0:
+            raise BackendError("Malformed provider response")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            raise BackendError("Malformed provider response")
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            raise BackendError("Malformed provider response")
+
+    elif provider == "anthropic":
+        blocks = data.get("content")
+        if not isinstance(blocks, list):
+            raise BackendError("Malformed provider response")
+        # Extract text from blocks
+        parts = []
+        for block in blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        content = "".join(parts)
+
+    elif provider == "ollama":
+        message = data.get("message")
+        if not isinstance(message, dict):
+            raise BackendError("Malformed provider response")
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            raise BackendError("Malformed provider response")
+
+    else:
+        raise BackendError("Malformed provider response")
+
+    # Cap content at MAX_RESPONSE_CONTENT
+    if len(content) > MAX_RESPONSE_CONTENT:
+        logger.warning(
+            f"LLM response content truncated from {len(content)} to {MAX_RESPONSE_CONTENT} bytes"
+        )
+        content = content[:MAX_RESPONSE_CONTENT]
+
+    return content
 
 
 @dataclass
@@ -205,13 +263,17 @@ class XAIBackend(Backend):
         resp.raise_for_status()
         data = resp.json()
 
-        return LLMResponse(
-            content=data["choices"][0]["message"]["content"],
-            model=data.get("model", request.model),
-            usage=data.get("usage", {}),
-            finish_reason=data["choices"][0].get("finish_reason", "stop"),
-            raw=data,
-        )
+        try:
+            content = _validate_llm_response(data, "xai")
+            return LLMResponse(
+                content=content,
+                model=data.get("model", request.model),
+                usage=data.get("usage", {}),
+                finish_reason=data["choices"][0].get("finish_reason", "stop"),
+                raw=data,
+            )
+        except (KeyError, TypeError, IndexError) as exc:
+            raise BackendError("Malformed provider response") from exc
 
 
 @dataclass
@@ -270,26 +332,24 @@ class AnthropicBackend(Backend):
         resp.raise_for_status()
         data = resp.json()
 
-        # Anthropic returns content as array of blocks
-        content = ""
-        for block in data.get("content", []):
-            if block.get("type") == "text":
-                content += block.get("text", "")
-
-        return LLMResponse(
-            content=content,
-            model=data.get("model", request.model),
-            usage={
-                "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
-                "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
-                "total_tokens": (
-                    data.get("usage", {}).get("input_tokens", 0) +
-                    data.get("usage", {}).get("output_tokens", 0)
-                ),
-            },
-            finish_reason=data.get("stop_reason", "end_turn"),
-            raw=data,
-        )
+        try:
+            content = _validate_llm_response(data, "anthropic")
+            return LLMResponse(
+                content=content,
+                model=data.get("model", request.model),
+                usage={
+                    "prompt_tokens": data.get("usage", {}).get("input_tokens", 0),
+                    "completion_tokens": data.get("usage", {}).get("output_tokens", 0),
+                    "total_tokens": (
+                        data.get("usage", {}).get("input_tokens", 0) +
+                        data.get("usage", {}).get("output_tokens", 0)
+                    ),
+                },
+                finish_reason=data.get("stop_reason", "end_turn"),
+                raw=data,
+            )
+        except (KeyError, TypeError, IndexError) as exc:
+            raise BackendError("Malformed provider response") from exc
 
 
 @dataclass
@@ -333,13 +393,17 @@ class OpenAIBackend(Backend):
         resp.raise_for_status()
         data = resp.json()
 
-        return LLMResponse(
-            content=data["choices"][0]["message"]["content"],
-            model=data.get("model", request.model),
-            usage=data.get("usage", {}),
-            finish_reason=data["choices"][0].get("finish_reason", "stop"),
-            raw=data,
-        )
+        try:
+            content = _validate_llm_response(data, "openai")
+            return LLMResponse(
+                content=content,
+                model=data.get("model", request.model),
+                usage=data.get("usage", {}),
+                finish_reason=data["choices"][0].get("finish_reason", "stop"),
+                raw=data,
+            )
+        except (KeyError, TypeError, IndexError) as exc:
+            raise BackendError("Malformed provider response") from exc
 
 
 @dataclass
@@ -375,20 +439,24 @@ class OllamaBackend(Backend):
         resp.raise_for_status()
         data = resp.json()
 
-        return LLMResponse(
-            content=data["message"]["content"],
-            model=data.get("model", request.model),
-            usage={
-                "prompt_tokens": data.get("prompt_eval_count", 0),
-                "completion_tokens": data.get("eval_count", 0),
-                "total_tokens": (
-                    data.get("prompt_eval_count", 0) +
-                    data.get("eval_count", 0)
-                ),
-            },
-            finish_reason="stop",
-            raw=data,
-        )
+        try:
+            content = _validate_llm_response(data, "ollama")
+            return LLMResponse(
+                content=content,
+                model=data.get("model", request.model),
+                usage={
+                    "prompt_tokens": data.get("prompt_eval_count", 0),
+                    "completion_tokens": data.get("eval_count", 0),
+                    "total_tokens": (
+                        data.get("prompt_eval_count", 0) +
+                        data.get("eval_count", 0)
+                    ),
+                },
+                finish_reason="stop",
+                raw=data,
+            )
+        except (KeyError, TypeError, IndexError) as exc:
+            raise BackendError("Malformed provider response") from exc
 
 
 # =============================================================================
@@ -415,6 +483,13 @@ def create_backend(config: Dict[str, Any]) -> Backend:
     api_key = config.get("api_key", "")
     if config.get("api_key_env"):
         api_key = os.environ.get(config["api_key_env"], "")
+
+    # Validate API key is non-empty for authenticated providers
+    if provider != "ollama" and not api_key:
+        env_hint = config.get("api_key_env", "api_key")
+        raise ValueError(
+            f"API key required for {provider}: set {env_hint} env var"
+        )
 
     return cls(
         name=config.get("name", provider),

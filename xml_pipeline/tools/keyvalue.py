@@ -11,6 +11,7 @@ import fnmatch
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Optional, Protocol, runtime_checkable
 
@@ -34,6 +35,21 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 MAX_TTL_SECONDS = 315_360_000  # ~10 years
+MAX_KEY_LENGTH = 256
+_KEY_PATTERN = re.compile(r'^[a-zA-Z0-9_:.\-]+$')
+
+
+def _validate_key(key: str) -> None:
+    """Validate key name. Raises ValueError if invalid."""
+    if not key:
+        raise ValueError("Key must not be empty")
+    if len(key) > MAX_KEY_LENGTH:
+        raise ValueError(f"Key exceeds maximum length ({MAX_KEY_LENGTH}), got {len(key)}")
+    if not _KEY_PATTERN.match(key):
+        raise ValueError(
+            f"Key contains invalid characters: {key!r} "
+            f"(allowed: a-z, A-Z, 0-9, _, :, ., -)"
+        )
 
 
 def _validate_ttl(ttl: Optional[float]) -> None:
@@ -279,6 +295,7 @@ async def key_value_get(
     Returns:
         Stored value, or null if not found
     """
+    _validate_key(key)
     nk = _ns_key(namespace, key)
     raw = await _get_backend().get(nk)
     value = json.loads(raw) if raw is not None else None
@@ -304,6 +321,7 @@ async def key_value_set(
     Returns:
         success (bool)
     """
+    _validate_key(key)
     nk = _ns_key(namespace, key)
     try:
         raw = json.dumps(value)
@@ -328,6 +346,7 @@ async def key_value_delete(
     Returns:
         deleted (bool)
     """
+    _validate_key(key)
     nk = _ns_key(namespace, key)
     deleted = await _get_backend().delete(nk)
     return ToolResult(success=True, data=deleted)
