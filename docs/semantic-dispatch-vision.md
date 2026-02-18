@@ -343,6 +343,96 @@ Together they provide:
 
 ---
 
+## 7. Dual Rendering — Presentation Layer over XML
+
+### Problem
+
+The pretty tables, forms, and checklists described above are designed for
+human readability. But the LLM doesn't need (or benefit from) box-drawing
+characters and visual layout. Conversely, humans shouldn't have to read
+serialized XML. Current systems pick one format and force both audiences
+to use it.
+
+### Idea
+
+XML is the canonical representation for all context primitives — consistent
+with xml-pipeline's existing philosophy. A **presentation layer** renders
+the same XML differently depending on the viewer:
+
+```
+              XML (source of truth)
+               /              \
+         Human view         LLM view
+        ┌──────────┐     <checklist>
+        │ [✓] Step1│       <item status="done">Step1</item>
+        │ [►] Step2│       <item status="active">Step2</item>
+        │ [ ] Step3│       <item status="pending">Step3</item>
+        └──────────┘     </checklist>
+```
+
+A form, as the human sees it:
+
+```
+┌─────────────────────────────────┐
+│ SHELL COMMAND                   │
+│                                 │
+│ command:  ___________________   │
+│ workdir:  ___________________ ? │
+│ timeout:  [30s]               ? │
+└─────────────────────────────────┘
+```
+
+The same form, as the LLM sees it:
+
+```xml
+<form tool="shell">
+  <field name="command" type="str" required="true"/>
+  <field name="workdir" type="str" required="false" default="."/>
+  <field name="timeout" type="int" required="false" default="30"/>
+</form>
+```
+
+The LLM fills it in by producing:
+
+```xml
+<form tool="shell">
+  <field name="command">lsof -i :8080</field>
+</form>
+```
+
+No pretty-printing, no box-drawing. Just structured data in, structured data
+out. The XML is trivially parseable, validatable against the form schema, and
+round-trips cleanly — which is what the system already does for everything else.
+
+### Why This Matters
+
+- **Each audience gets the optimal format.** Humans get visual affordances
+  (checkboxes, tables, borders). LLMs get clean, parseable structure.
+- **One source of truth.** The XML is canonical. The human view is a
+  rendering pass, not a separate artifact. No sync issues.
+- **Consistent with the project.** XML is already the sovereign wire format.
+  Context primitives being XML means they flow through the same pipeline —
+  validation, C14N, signing — as everything else.
+- **The presentation layer is swappable.** Terminal UI, web dashboard, IDE
+  plugin — all just different renderers over the same XML primitives.
+- **LLMs don't waste tokens on decoration.** No box-drawing characters, no
+  alignment spaces, no visual chrome. Just semantic content.
+
+### Applied to All Primitives
+
+| Primitive | Human rendering | LLM serialization |
+|-----------|----------------|-------------------|
+| Checklist | `[✓] [►] [ ]` visual list | `<checklist><item status="done">` |
+| Form | Bordered box with blanks | `<form><field name="" type="">` |
+| Frame | Indented sub-section | `<frame type="self" inherits="true">` |
+| Message | Chat bubble / formatted text | `<message from="" to="">` (already exists) |
+| Tool result | Formatted summary card | `<result tool="" exit-code="">` |
+
+The pretty-print examples throughout this document are the *human* rendering.
+The wire format is always XML.
+
+---
+
 ## Open Questions
 
 - **Parameter extraction:** When a form is filled, is validation enough or
